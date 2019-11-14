@@ -11,4 +11,6 @@ https://doi.org/10.1016/j.jclepro.2019.118658
 
 corresponding author: deetman@cml.leidenuniv.nl
 
+The dynamic stock model used is based on the ODYM model by Stefan Pauliuk, Uni Freiburg, Germany. For the original code & latest updates, see: https://github.com/IndEcol/ODYM
+
 In order to run the model please specify user-specific paths tagged in the code as '# SET YOUR PATH HERE'
