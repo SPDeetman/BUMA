@@ -377,24 +377,24 @@ kg_sem_rur_cement   = m2_sem_rur * material_cement.loc[2]
 kg_sem_rur_concrete = m2_sem_rur * material_concrete.loc[2]
 kg_sem_rur_wood     = m2_sem_rur * material_wood.loc[2]
 kg_sem_rur_copper   = m2_sem_rur * material_copper.loc[2]
-kg_sem_rur_aluminium = m2_det_rur * material_aluminium.loc[2]
-kg_sem_rur_glass    = m2_det_rur * material_glass.loc[2]
+kg_sem_rur_aluminium = m2_sem_rur * material_aluminium.loc[2]       # Adjusted in V2
+kg_sem_rur_glass    = m2_sem_rur * material_glass.loc[2]            # Adjusted in V2
 
 kg_app_rur_steel    = m2_app_rur * material_steel.loc[3]
 kg_app_rur_cement   = m2_app_rur * material_cement.loc[3]
 kg_app_rur_concrete = m2_app_rur * material_concrete.loc[3]
 kg_app_rur_wood     = m2_app_rur * material_wood.loc[3]
 kg_app_rur_copper   = m2_app_rur * material_copper.loc[3]
-kg_app_rur_aluminium = m2_det_rur * material_aluminium.loc[3]
-kg_app_rur_glass    = m2_det_rur * material_glass.loc[3]
+kg_app_rur_aluminium = m2_app_rur * material_aluminium.loc[3]       # Adjusted in V2
+kg_app_rur_glass    = m2_app_rur * material_glass.loc[3]            # Adjusted in V2
 
 kg_hig_rur_steel    = m2_hig_rur * material_steel.loc[4]
 kg_hig_rur_cement   = m2_hig_rur * material_cement.loc[4]
 kg_hig_rur_concrete = m2_hig_rur * material_concrete.loc[4]
 kg_hig_rur_wood     = m2_hig_rur * material_wood.loc[4]
 kg_hig_rur_copper   = m2_hig_rur * material_copper.loc[4]
-kg_hig_rur_aluminium = m2_det_rur * material_aluminium.loc[4]
-kg_hig_rur_glass    = m2_det_rur * material_glass.loc[4]
+kg_hig_rur_aluminium = m2_hig_rur * material_aluminium.loc[4]       # Adjusted in V2
+kg_hig_rur_glass    = m2_hig_rur * material_glass.loc[4]            # Adjusted in V2
 
 # URBAN material stock (millions of kgs)
 kg_det_urb_steel    = m2_det_urb * material_steel.loc[1]
@@ -410,24 +410,24 @@ kg_sem_urb_cement   = m2_sem_urb * material_cement.loc[2]
 kg_sem_urb_concrete = m2_sem_urb * material_concrete.loc[2]
 kg_sem_urb_wood     = m2_sem_urb * material_wood.loc[2]
 kg_sem_urb_copper   = m2_sem_urb * material_copper.loc[2]
-kg_sem_urb_aluminium  = m2_det_urb * material_aluminium.loc[2]
-kg_sem_urb_glass   = m2_det_urb * material_glass.loc[2]
+kg_sem_urb_aluminium  = m2_sem_urb * material_aluminium.loc[2]      # Adjusted in V2
+kg_sem_urb_glass   = m2_sem_urb * material_glass.loc[2]             # Adjusted in V2
 
 kg_app_urb_steel    = m2_app_urb * material_steel.loc[3]
 kg_app_urb_cement   = m2_app_urb * material_cement.loc[3]
 kg_app_urb_concrete = m2_app_urb * material_concrete.loc[3]
 kg_app_urb_wood     = m2_app_urb * material_wood.loc[3]
 kg_app_urb_copper   = m2_app_urb * material_copper.loc[3]
-kg_app_urb_aluminium  = m2_det_urb * material_aluminium.loc[3]
-kg_app_urb_glass   = m2_det_urb * material_glass.loc[3]
+kg_app_urb_aluminium  = m2_app_urb * material_aluminium.loc[3]      # Adjusted in V2
+kg_app_urb_glass   = m2_app_urb * material_glass.loc[3]             # Adjusted in V2
 
 kg_hig_urb_steel    = m2_hig_urb * material_steel.loc[4]
 kg_hig_urb_cement   = m2_hig_urb * material_cement.loc[4]
 kg_hig_urb_concrete = m2_hig_urb * material_concrete.loc[4]
 kg_hig_urb_wood     = m2_hig_urb * material_wood.loc[4]
 kg_hig_urb_copper   = m2_hig_urb * material_copper.loc[4]
-kg_hig_urb_aluminium  = m2_det_urb * material_aluminium.loc[4]
-kg_hig_urb_glass   = m2_det_urb * material_glass.loc[4]
+kg_hig_urb_aluminium  = m2_hig_urb * material_aluminium.loc[4]      # Adjusted in V2
+kg_hig_urb_glass   = m2_hig_urb * material_glass.loc[4]             # Adjusted in V2
 
 # Commercial Building materials (in Million kg)
 kg_office_steel     = commercial_m2_office * materials_commercial['Offices']['Steel']
@@ -609,24 +609,24 @@ kg_sem_rur_cement_i   = m2_sem_rur_i * material_cement.loc[2]
 kg_sem_rur_concrete_i = m2_sem_rur_i * material_concrete.loc[2]
 kg_sem_rur_wood_i     = m2_sem_rur_i * material_wood.loc[2]
 kg_sem_rur_copper_i   = m2_sem_rur_i * material_copper.loc[2]
-kg_sem_rur_aluminium_i = m2_det_rur_i * material_aluminium.loc[2]
-kg_sem_rur_glass_i    = m2_det_rur_i * material_glass.loc[2]
+kg_sem_rur_aluminium_i = m2_sem_rur_i * material_aluminium.loc[2]       # Adjusted in V2
+kg_sem_rur_glass_i    = m2_sem_rur_i * material_glass.loc[2]            # Adjusted in V2
 
 kg_app_rur_steel_i    = m2_app_rur_i * material_steel.loc[3]
 kg_app_rur_cement_i   = m2_app_rur_i * material_cement.loc[3]
 kg_app_rur_concrete_i = m2_app_rur_i * material_concrete.loc[3]
 kg_app_rur_wood_i     = m2_app_rur_i * material_wood.loc[3]
 kg_app_rur_copper_i   = m2_app_rur_i * material_copper.loc[3]
-kg_app_rur_aluminium_i = m2_det_rur_i * material_aluminium.loc[3]
-kg_app_rur_glass_i    = m2_det_rur_i * material_glass.loc[3]
+kg_app_rur_aluminium_i = m2_app_rur_i * material_aluminium.loc[3]       # Adjusted in V2
+kg_app_rur_glass_i    = m2_app_rur_i * material_glass.loc[3]            # Adjusted in V2
 
 kg_hig_rur_steel_i    = m2_hig_rur_i * material_steel.loc[4]
 kg_hig_rur_cement_i   = m2_hig_rur_i * material_cement.loc[4]
 kg_hig_rur_concrete_i = m2_hig_rur_i * material_concrete.loc[4]
 kg_hig_rur_wood_i     = m2_hig_rur_i * material_wood.loc[4]
 kg_hig_rur_copper_i   = m2_hig_rur_i * material_copper.loc[4]
-kg_hig_rur_aluminium_i = m2_det_rur_i * material_aluminium.loc[4]
-kg_hig_rur_glass_i    = m2_det_rur_i * material_glass.loc[4]
+kg_hig_rur_aluminium_i = m2_hig_rur_i * material_aluminium.loc[4]       # Adjusted in V2
+kg_hig_rur_glass_i    = m2_hig_rur_i * material_glass.loc[4]            # Adjusted in V2
 
 # URBAN material inflow (millions of kgs)
 kg_det_urb_steel_i    = m2_det_urb_i * material_steel.loc[1]
@@ -642,24 +642,24 @@ kg_sem_urb_cement_i   = m2_sem_urb_i * material_cement.loc[2]
 kg_sem_urb_concrete_i = m2_sem_urb_i * material_concrete.loc[2]
 kg_sem_urb_wood_i     = m2_sem_urb_i * material_wood.loc[2]
 kg_sem_urb_copper_i   = m2_sem_urb_i * material_copper.loc[2]
-kg_sem_urb_aluminium_i  = m2_det_urb_i * material_aluminium.loc[2]
-kg_sem_urb_glass_i    = m2_det_urb_i * material_glass.loc[2]
+kg_sem_urb_aluminium_i  = m2_sem_urb_i * material_aluminium.loc[2]      # Adjusted in V2
+kg_sem_urb_glass_i    = m2_sem_urb_i * material_glass.loc[2]            # Adjusted in V2
 
 kg_app_urb_steel_i    = m2_app_urb_i * material_steel.loc[3]
 kg_app_urb_cement_i   = m2_app_urb_i * material_cement.loc[3]
 kg_app_urb_concrete_i = m2_app_urb_i * material_concrete.loc[3]
 kg_app_urb_wood_i     = m2_app_urb_i * material_wood.loc[3]
 kg_app_urb_copper_i   = m2_app_urb_i * material_copper.loc[3]
-kg_app_urb_aluminium_i  = m2_det_urb_i * material_aluminium.loc[3]
-kg_app_urb_glass_i   = m2_det_urb_i * material_glass.loc[3]
+kg_app_urb_aluminium_i  = m2_app_urb_i * material_aluminium.loc[3]      # Adjusted in V2
+kg_app_urb_glass_i   = m2_app_urb_i * material_glass.loc[3]             # Adjusted in V2
 
 kg_hig_urb_steel_i    = m2_hig_urb_i * material_steel.loc[4]
 kg_hig_urb_cement_i   = m2_hig_urb_i * material_cement.loc[4]
 kg_hig_urb_concrete_i = m2_hig_urb_i * material_concrete.loc[4]
 kg_hig_urb_wood_i     = m2_hig_urb_i * material_wood.loc[4]
 kg_hig_urb_copper_i   = m2_hig_urb_i * material_copper.loc[4]
-kg_hig_urb_aluminium_i  = m2_det_urb_i * material_aluminium.loc[4]
-kg_hig_urb_glass_i   = m2_det_urb_i * material_glass.loc[4]
+kg_hig_urb_aluminium_i  = m2_hig_urb_i * material_aluminium.loc[4]      # Adjusted in V2
+kg_hig_urb_glass_i   = m2_hig_urb_i * material_glass.loc[4]             # Adjusted in V2
 
 # RURAL material OUTflow (Millions of kgs = *1000 tons)
 kg_det_rur_steel_o    = m2_det_rur_o * material_steel.loc[1]
@@ -675,24 +675,24 @@ kg_sem_rur_cement_o   = m2_sem_rur_o * material_cement.loc[2]
 kg_sem_rur_concrete_o = m2_sem_rur_o * material_concrete.loc[2]
 kg_sem_rur_wood_o     = m2_sem_rur_o * material_wood.loc[2]
 kg_sem_rur_copper_o   = m2_sem_rur_o * material_copper.loc[2]
-kg_sem_rur_aluminium_o = m2_det_rur_o * material_aluminium.loc[2]
-kg_sem_rur_glass_o    = m2_det_rur_o * material_glass.loc[2]
+kg_sem_rur_aluminium_o = m2_sem_rur_o * material_aluminium.loc[2]       # Adjusted in V2
+kg_sem_rur_glass_o    = m2_sem_rur_o * material_glass.loc[2]            # Adjusted in V2
 
 kg_app_rur_steel_o    = m2_app_rur_o * material_steel.loc[3]
 kg_app_rur_cement_o   = m2_app_rur_o * material_cement.loc[3]
 kg_app_rur_concrete_o = m2_app_rur_o * material_concrete.loc[3]
 kg_app_rur_wood_o     = m2_app_rur_o * material_wood.loc[3]
 kg_app_rur_copper_o   = m2_app_rur_o * material_copper.loc[3]
-kg_app_rur_aluminium_o = m2_det_rur_o * material_aluminium.loc[3]
-kg_app_rur_glass_o    = m2_det_rur_o * material_glass.loc[3]
+kg_app_rur_aluminium_o = m2_app_rur_o * material_aluminium.loc[3]       # Adjusted in V2
+kg_app_rur_glass_o    = m2_app_rur_o * material_glass.loc[3]            # Adjusted in V2
 
 kg_hig_rur_steel_o    = m2_hig_rur_o * material_steel.loc[4]
 kg_hig_rur_cement_o   = m2_hig_rur_o * material_cement.loc[4]
 kg_hig_rur_concrete_o = m2_hig_rur_o * material_concrete.loc[4]
 kg_hig_rur_wood_o     = m2_hig_rur_o * material_wood.loc[4]
 kg_hig_rur_copper_o   = m2_hig_rur_o * material_copper.loc[4]
-kg_hig_rur_aluminium_o = m2_det_rur_o * material_aluminium.loc[4]
-kg_hig_rur_glass_o    = m2_det_rur_o * material_glass.loc[4]
+kg_hig_rur_aluminium_o = m2_hig_rur_o * material_aluminium.loc[4]       # Adjusted in V2
+kg_hig_rur_glass_o    = m2_hig_rur_o * material_glass.loc[4]            # Adjusted in V2
 
 # URBAN material OUTflow (millions of kgs)
 kg_det_urb_steel_o    = m2_det_urb_o * material_steel.loc[1]
@@ -708,24 +708,24 @@ kg_sem_urb_cement_o   = m2_sem_urb_o * material_cement.loc[2]
 kg_sem_urb_concrete_o = m2_sem_urb_o * material_concrete.loc[2]
 kg_sem_urb_wood_o     = m2_sem_urb_o * material_wood.loc[2]
 kg_sem_urb_copper_o   = m2_sem_urb_o * material_copper.loc[2]
-kg_sem_urb_aluminium_o  = m2_det_urb_o * material_aluminium.loc[2]
-kg_sem_urb_glass_o    = m2_det_urb_o * material_glass.loc[2]
+kg_sem_urb_aluminium_o  = m2_sem_urb_o * material_aluminium.loc[2]      # Adjusted in V2
+kg_sem_urb_glass_o    = m2_sem_urb_o * material_glass.loc[2]            # Adjusted in V2
 
 kg_app_urb_steel_o    = m2_app_urb_o * material_steel.loc[3]
 kg_app_urb_cement_o   = m2_app_urb_o * material_cement.loc[3]
 kg_app_urb_concrete_o = m2_app_urb_o * material_concrete.loc[3]
 kg_app_urb_wood_o     = m2_app_urb_o * material_wood.loc[3]
 kg_app_urb_copper_o   = m2_app_urb_o * material_copper.loc[3]
-kg_app_urb_aluminium_o  = m2_det_urb_o * material_aluminium.loc[3]
-kg_app_urb_glass_o   = m2_det_urb_o * material_glass.loc[3]
+kg_app_urb_aluminium_o  = m2_app_urb_o * material_aluminium.loc[3]      # Adjusted in V2
+kg_app_urb_glass_o   = m2_app_urb_o * material_glass.loc[3]             # Adjusted in V2
 
 kg_hig_urb_steel_o    = m2_hig_urb_o * material_steel.loc[4]
 kg_hig_urb_cement_o   = m2_hig_urb_o * material_cement.loc[4]
 kg_hig_urb_concrete_o = m2_hig_urb_o * material_concrete.loc[4]
 kg_hig_urb_wood_o     = m2_hig_urb_o * material_wood.loc[4]
 kg_hig_urb_copper_o   = m2_hig_urb_o * material_copper.loc[4]
-kg_hig_urb_aluminium_o  = m2_det_urb_o * material_aluminium.loc[4]
-kg_hig_urb_glass_o   = m2_det_urb_o * material_glass.loc[4]
+kg_hig_urb_aluminium_o  = m2_hig_urb_o * material_aluminium.loc[4]      # Adjusted in V2
+kg_hig_urb_glass_o   = m2_hig_urb_o * material_glass.loc[4]             # Adjusted in V2
 
 # Commercial Building materials INFLOW (in Million kg)
 kg_office_steel_i     = m2_office_i * materials_commercial['Offices']['Steel']
