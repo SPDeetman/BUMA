@@ -15,6 +15,7 @@ import math
 
 # set current directory
 os.chdir("C:\\Users\\...")   # SET YOUR PATH HERE
+idx = pd.IndexSlice
 
 # Set general constants
 regions = 26        #26 IMAGE regions
@@ -26,7 +27,7 @@ inflation = 1.2423  # gdp/cap inflation correction between 2005 (IMAGE data) & 2
 # Set Flags for sensitivity analysis
 flag_alpha = 0      # switch for the sensitivity analysis on alpha, if 1 the maximum alpha is 10% above the maximum found in the data
 flag_ExpDec = 0     # switch to choose between Gompertz and Exponential Decay function for commercial floorspace demand (0 = Gompertz, 1 = Expdec)
-flag_Normal = 1     # switch to choose between Weibull and Normal lifetime distributions (0 = Weibull, 1 = Normal)
+flag_Normal = 0     # switch to choose between Weibull and Normal lifetime distributions (0 = Weibull, 1 = Normal)
 flag_Mean   = 0     # switch to choose between material intensity settings (0 = regular regional, 1 = mean, 2 = high, 3 = low, 4 = median)
 
 #%%Load files & arrange tables ----------------------------------------------------
@@ -44,9 +45,9 @@ else:
 
 # load material Databe csv-files
 avg_m2_cap = pd.read_csv('files_DB\Average_m2_per_cap.csv')           # Avg_m2_cap; unit: m2/capita; meaning: average square meters per person (by region & rural/urban) 
-building_materials = pd.read_csv('files_DB\Building_materials' + file_addition + '.csv')   # Building_materials; unit: kg/m2; meaning: the average material use per square meter (by building type, by region & by area)
+building_materials = pd.read_csv('files_DB\Building_materials' + file_addition + '_new.csv', index_col = [0,1,2])   # Building_materials; unit: kg/m2; meaning: the average material use per square meter (by building type, by region & by area)
 housing_type = pd.read_csv('files_DB\Housing_type.csv')               # Housing_type; unit: %; meaning: the share of the NUMBER OF PEOPLE living in a particular building type (by region & by area) 
-materials_commercial = pd.read_csv('files_DB\materials_commercial' + file_addition + '.csv', index_col = [0]) # 7 building materials in 4 commercial building types; unit: kg/m2; meaning: the average material use per square meter (by commercial building type) 
+materials_commercial = pd.read_csv('files_DB\materials_commercial' + file_addition + '_new.csv', index_col = [0,1]) # 7 building materials in 4 commercial building types; unit: kg/m2; meaning: the average material use per square meter (by commercial building type) 
 
 # load IMAGE csv-files
 floorspace = pd.read_csv('files_IMAGE/res_Floorspace.csv')                                  # Floorspace; unit: m2/capita; meaning: the average m2 per capita (over time, by region & area)
@@ -354,113 +355,254 @@ commercial_m2_govern = pd.DataFrame(commercial_m2_cap_govern_tail.values * pop_t
 
 #%% MATERIAL CALCULATIONS
 
-# restructuring for the materials (kg/m2)
-material_steel =    building_materials.pivot(index="Building_type", columns="Region", values="Steel")
-material_cement =   building_materials.pivot(index="Building_type", columns="Region", values="Cement")
-material_concrete = building_materials.pivot(index="Building_type", columns="Region", values="Concrete")
-material_wood =      building_materials.pivot(index="Building_type", columns="Region", values="Wood")
-material_copper =   building_materials.pivot(index="Building_type", columns="Region", values="Copper")
-material_aluminium = building_materials.pivot(index="Building_type", columns="Region", values="Aluminium")
-material_glass =    building_materials.pivot(index="Building_type", columns="Region", values="Glass")
+#First: interpolate the dynamic material intensity data
+materials_commercial_dynamic = pd.DataFrame(index=pd.MultiIndex.from_product([list(range(1721,2051)), list(materials_commercial.index.levels[1])]), columns=materials_commercial.columns)
+building_materials_dynamic   = pd.DataFrame(index=pd.MultiIndex.from_product([list(range(1721,2051)), list(range(1,27)), list(range(1,5))]), columns=building_materials.columns)
+
+for material in building_materials.columns:
+   for building in list(building_materials.index.levels[2]):
+      
+      selection = building_materials.loc[idx[:,:,building],material].droplevel(2, axis=0).unstack()
+      selection.loc[1721,:] = selection.loc[selection.first_valid_index(),:]
+      selection.loc[2051,:] = selection.loc[selection.last_valid_index(),:]
+      selection = selection.reindex(list(range(1721,2051))).interpolate()
+      
+      building_materials_dynamic.loc[idx[:,:,building], material] = selection.stack()
+
+for building in materials_commercial.columns:
+   selection = materials_commercial.loc[idx[:,:], building].unstack()
+   selection.loc[1721,:] = selection.loc[selection.first_valid_index(),:]
+   selection.loc[2051,:] = selection.loc[selection.last_valid_index(),:]
+   selection = selection.reindex(list(range(1721,2051))).interpolate()
+   
+   materials_commercial_dynamic.loc[idx[:,:], building] = selection.stack()   
+
+# restructuring for the residential materials (kg/m2)
+material_steel     = building_materials_dynamic.loc[idx[:,:,:],'Steel'].unstack(level=1)
+material_cement    = pd.DataFrame(0, index=material_steel.index, columns=material_steel.columns)
+material_concrete  = building_materials_dynamic.loc[idx[:,:,:],'Concrete'].unstack(level=1)
+material_wood      = building_materials_dynamic.loc[idx[:,:,:],'Wood'].unstack(level=1)
+material_copper    = building_materials_dynamic.loc[idx[:,:,:],'Copper'].unstack(level=1)
+material_aluminium = building_materials_dynamic.loc[idx[:,:,:],'Aluminium'].unstack(level=1)
+material_glass     = building_materials_dynamic.loc[idx[:,:,:],'Glass'].unstack(level=1)
+material_brick     = building_materials_dynamic.loc[idx[:,:,:],'Brick'].unstack(level=1)
+
+# restructuring for the commercial materials (kg/m2)
+columns = pd.MultiIndex.from_product([list(range(1,27)), ['Offices','Retail+','Hotels+','Govt+'] ])
+material_com_steel     = pd.concat([materials_commercial_dynamic.loc[idx[:,'Steel'],:].droplevel(1)] * 26, axis=1).set_axis(columns, axis=1, inplace=False)
+material_com_cement    = pd.concat([materials_commercial_dynamic.loc[idx[:,'Cement'],:].droplevel(1)] * 26, axis=1).set_axis(columns, axis=1, inplace=False)
+material_com_concrete  = pd.concat([materials_commercial_dynamic.loc[idx[:,'Concrete'],:].droplevel(1)] * 26, axis=1).set_axis(columns, axis=1, inplace=False)
+material_com_wood      = pd.concat([materials_commercial_dynamic.loc[idx[:,'Wood'],:].droplevel(1)] * 26, axis=1).set_axis(columns, axis=1, inplace=False)
+material_com_copper    = pd.concat([materials_commercial_dynamic.loc[idx[:,'Copper'],:].droplevel(1)] * 26, axis=1).set_axis(columns, axis=1, inplace=False)
+material_com_aluminium = pd.concat([materials_commercial_dynamic.loc[idx[:,'Aluminium'],:].droplevel(1)] * 26, axis=1).set_axis(columns, axis=1, inplace=False)
+material_com_glass     = pd.concat([materials_commercial_dynamic.loc[idx[:,'Glass'],:].droplevel(1)] * 26, axis=1).set_axis(columns, axis=1, inplace=False)
+material_com_brick     = pd.concat([materials_commercial_dynamic.loc[idx[:,'Brick'],:].droplevel(1)] * 26, axis=1).set_axis(columns, axis=1, inplace=False)
+
+
+#%% INFLOW & OUTFLOW
+
+import sys 
+sys.path.append('C:\\Users\\Admin\\surfdrive\\Paper_3\\Python')
+import dynamic_stock_model
+from dynamic_stock_model import DynamicStockModel as DSM
+
+
+if flag_Normal == 0:
+    lifetimes_DB = pd.read_csv('files_lifetimes\lifetimes.csv')  # Weibull parameter database (shape & scale parameters given by region, area & building-type)
+else:
+    lifetimes_DB = pd.read_csv('files_lifetimes\lifetimes_normal.csv')  # Normal distribution database (Mean & StDev parameters given by region, area & building-type, though only defined by region for now)
+
+# actual inflow calculations
+def inflow_outflow(shape, scale, stock, length):            # length is the number of years in the entire period
+    
+   columns = pd.MultiIndex.from_product([list(range(1,27)), list(range(1721,2051))], names=['regions', 'time'])
+   out_oc_reg = pd.DataFrame(index=range(1721,2051), columns=columns)
+   out_sc_reg = pd.DataFrame(index=range(1721,2051), columns=columns)
+   out_i_reg  = pd.DataFrame(index=range(1721,2051), columns=range(1,27))
+    
+    
+   for region in range(0,26):
+      shape_list = [shape[region] for i in range(0,length)]    
+      scale_list = [scale[region] for i in range(0,length)]
+      
+      if flag_Normal == 0:
+         DSMforward = DSM(t = np.arange(0,length,1), s=np.array(stock[region+1]), lt = {'Type': 'Weibull', 'Shape': np.array(shape_list), 'Scale': np.array(scale_list)})
+      else:
+         DSMforward = DSM(t = np.arange(0,length,1), s=np.array(stock[region+1]), lt = {'Type': 'FoldedNormal', 'Mean': np.array(shape_list), 'StdDev': np.array(scale_list)}) # shape & scale list are actually Mean & StDev here
+      
+      out_sc, out_oc, out_i = DSMforward.compute_stock_driven_model(NegativeInflowCorrect = True)
+      
+      # (for now) We're only interested in the total outflow, so we sum the outflow by cohort each year
+      out_oc[out_oc < 0] = 0  # in the rare occasion that negative outflow exists (as a consequence of negative inflow correct), purge values below zero
+      out_oc_reg.loc[:,idx[region+1,:]] = pd.DataFrame(out_oc, index=list(range(1721,2051)), columns=list(range(1721,2051))).values
+      out_sc_reg.loc[:,idx[region+1,:]] = pd.DataFrame(out_sc, index=list(range(1721,2051)), columns=list(range(1721,2051))).values
+      out_i_reg[region+1]               = pd.Series(out_i, index=list(range(1721,2051)))
+      
+   return out_oc_reg, out_i_reg, out_sc_reg
+
+length = len(m2_hig_urb[1])  # = 330
+
+# the code to select the right shape & scale parameter from the database (lifetime_DB) is rather bulky, so we prepare a set of scale & shape parameters, instead of doing so 'in-line' when calling the stock model 
+shape_selection_m2_det_rur = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Detached')])
+scale_selection_m2_det_rur = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Detached')])
+shape_selection_m2_sem_rur = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Semi-detached')])
+scale_selection_m2_sem_rur = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Semi-detached')])
+shape_selection_m2_app_rur = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Appartments')])
+scale_selection_m2_app_rur = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Appartments')])
+shape_selection_m2_hig_rur = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'High-rise')])
+scale_selection_m2_hig_rur = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'High-rise')])
+shape_selection_m2_det_urb = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Detached')])
+scale_selection_m2_det_urb = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Detached')])
+shape_selection_m2_sem_urb = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Semi-detached')])
+scale_selection_m2_sem_urb = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Semi-detached')])
+shape_selection_m2_app_urb = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Appartments')])
+scale_selection_m2_app_urb = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Appartments')])
+shape_selection_m2_hig_urb = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'High-rise')])
+scale_selection_m2_hig_urb = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'High-rise')])
+
+# Hardcoded lifetime parameters for COMMERCIAL building lifetime (avg. lt = 45 yr)
+if flag_Normal == 0:
+    scale_comm = np.array([49.567] * 26) # Weibull scale
+    shape_comm = np.array([1.443] * 26)  # Weibull shape
+else: 
+    scale_comm = np.array([14] * 26)	# StDev in case of Normal distribution
+    shape_comm = np.array([45] * 26)    # Mean in case of Normal distribution
+
+# call the actual stock model to derive inflow & outflow based on stock & lifetime
+m2_det_rur_o, m2_det_rur_i, m2_det_rur_s = inflow_outflow(shape_selection_m2_det_rur, scale_selection_m2_det_rur, m2_det_rur, length)
+m2_sem_rur_o, m2_sem_rur_i, m2_sem_rur_s = inflow_outflow(shape_selection_m2_sem_rur, scale_selection_m2_sem_rur, m2_sem_rur, length)
+m2_app_rur_o, m2_app_rur_i, m2_app_rur_s = inflow_outflow(shape_selection_m2_app_rur, scale_selection_m2_app_rur, m2_app_rur, length)
+m2_hig_rur_o, m2_hig_rur_i, m2_hig_rur_s = inflow_outflow(shape_selection_m2_hig_rur, scale_selection_m2_hig_rur, m2_hig_rur, length)
+
+m2_det_urb_o, m2_det_urb_i, m2_det_urb_s = inflow_outflow(shape_selection_m2_det_urb, scale_selection_m2_det_urb, m2_det_urb, length)
+m2_sem_urb_o, m2_sem_urb_i, m2_sem_urb_s = inflow_outflow(shape_selection_m2_sem_urb, scale_selection_m2_sem_urb, m2_sem_urb, length)
+m2_app_urb_o, m2_app_urb_i, m2_app_urb_s = inflow_outflow(shape_selection_m2_app_urb, scale_selection_m2_app_urb, m2_app_urb, length)
+m2_hig_urb_o, m2_hig_urb_i, m2_hig_urb_s = inflow_outflow(shape_selection_m2_hig_urb, scale_selection_m2_hig_urb, m2_hig_urb, length)
+
+m2_office_o, m2_office_i, m2_office_s    = inflow_outflow(shape_comm, scale_comm, commercial_m2_office, length)
+m2_retail_o, m2_retail_i, m2_retail_s    = inflow_outflow(shape_comm, scale_comm, commercial_m2_retail, length)
+m2_hotels_o, m2_hotels_i, m2_hotels_s    = inflow_outflow(shape_comm, scale_comm, commercial_m2_hotels, length)
+m2_govern_o, m2_govern_i, m2_govern_s    = inflow_outflow(shape_comm, scale_comm, commercial_m2_govern, length)
+
+# total MILLIONS of square meters inflow & outflow
+m2_res_o  = m2_det_rur_o.sum(axis=1, level=0) + m2_sem_rur_o.sum(axis=1, level=0)  + m2_app_rur_o.sum(axis=1, level=0)  + m2_hig_rur_o.sum(axis=1, level=0)  + m2_det_urb_o.sum(axis=1, level=0)  + m2_sem_urb_o.sum(axis=1, level=0)  + m2_app_urb_o.sum(axis=1, level=0)  + m2_hig_urb_o.sum(axis=1, level=0) 
+m2_res_i  = m2_det_rur_i + m2_sem_rur_i + m2_app_rur_i + m2_hig_rur_i + m2_det_urb_i + m2_sem_urb_i + m2_app_urb_i + m2_hig_urb_i
+m2_comm_o = m2_office_o.sum(axis=1, level=0)  + m2_retail_o.sum(axis=1, level=0)  + m2_hotels_o.sum(axis=1, level=0)  + m2_govern_o.sum(axis=1, level=0) 
+m2_comm_i = m2_office_i + m2_retail_i + m2_hotels_i + m2_govern_i
+
+#####################################################################################################################################
+#%% Material stocks
 
 # RURAL material stock (Millions of kgs = *1000 tons)
-kg_det_rur_steel    = m2_det_rur * material_steel.loc[1]
-kg_det_rur_cement   = m2_det_rur * material_cement.loc[1]
-kg_det_rur_concrete = m2_det_rur * material_concrete.loc[1]
-kg_det_rur_wood     = m2_det_rur * material_wood.loc[1]
-kg_det_rur_copper   = m2_det_rur * material_copper.loc[1]
-kg_det_rur_aluminium = m2_det_rur * material_aluminium.loc[1]
-kg_det_rur_glass   = m2_det_rur * material_glass.loc[1]
+kg_det_rur_steel     = m2_det_rur_s.mul(material_steel.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_cement    = m2_det_rur_s.mul(material_cement.loc[idx[:,1],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_det_rur_concrete  = m2_det_rur_s.mul(material_concrete.loc[idx[:,1],:].droplevel(1).unstack(),  axis=1).sum(axis=1, level=0)
+kg_det_rur_wood      = m2_det_rur_s.mul(material_wood.loc[idx[:,1],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_det_rur_copper    = m2_det_rur_s.mul(material_copper.loc[idx[:,1],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_det_rur_aluminium = m2_det_rur_s.mul(material_aluminium.loc[idx[:,1],:].droplevel(1).unstack(), axis=1).sum(axis=1, level=0)
+kg_det_rur_glass     = m2_det_rur_s.mul(material_glass.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_brick     = m2_det_rur_s.mul(material_brick.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_sem_rur_steel    = m2_sem_rur * material_steel.loc[2]
-kg_sem_rur_cement   = m2_sem_rur * material_cement.loc[2]
-kg_sem_rur_concrete = m2_sem_rur * material_concrete.loc[2]
-kg_sem_rur_wood     = m2_sem_rur * material_wood.loc[2]
-kg_sem_rur_copper   = m2_sem_rur * material_copper.loc[2]
-kg_sem_rur_aluminium = m2_sem_rur * material_aluminium.loc[2]       # Adjusted in V2
-kg_sem_rur_glass    = m2_sem_rur * material_glass.loc[2]            # Adjusted in V2
+kg_sem_rur_steel     = m2_sem_rur_s.mul(material_steel.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_rur_cement    = m2_sem_rur_s.mul(material_cement.loc[idx[:,2],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_sem_rur_concrete  = m2_sem_rur_s.mul(material_concrete.loc[idx[:,2],:].droplevel(1).unstack(),  axis=1).sum(axis=1, level=0) 
+kg_sem_rur_wood      = m2_sem_rur_s.mul(material_wood.loc[idx[:,2],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_sem_rur_copper    = m2_sem_rur_s.mul(material_copper.loc[idx[:,2],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_sem_rur_aluminium = m2_sem_rur_s.mul(material_aluminium.loc[idx[:,2],:].droplevel(1).unstack(), axis=1).sum(axis=1, level=0)    
+kg_sem_rur_glass     = m2_sem_rur_s.mul(material_glass.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)   
+kg_sem_rur_brick     = m2_sem_rur_s.mul(material_brick.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)  
 
-kg_app_rur_steel    = m2_app_rur * material_steel.loc[3]
-kg_app_rur_cement   = m2_app_rur * material_cement.loc[3]
-kg_app_rur_concrete = m2_app_rur * material_concrete.loc[3]
-kg_app_rur_wood     = m2_app_rur * material_wood.loc[3]
-kg_app_rur_copper   = m2_app_rur * material_copper.loc[3]
-kg_app_rur_aluminium = m2_app_rur * material_aluminium.loc[3]       # Adjusted in V2
-kg_app_rur_glass    = m2_app_rur * material_glass.loc[3]            # Adjusted in V2
+kg_app_rur_steel     = m2_app_rur_s.mul(material_steel.loc[idx[:,3],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)
+kg_app_rur_cement    = m2_app_rur_s.mul(material_cement.loc[idx[:,3],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_app_rur_concrete  = m2_app_rur_s.mul(material_concrete.loc[idx[:,3],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_app_rur_wood      = m2_app_rur_s.mul(material_wood.loc[idx[:,3],:].droplevel(1).unstack(),        axis=1).sum(axis=1, level=0)
+kg_app_rur_copper    = m2_app_rur_s.mul(material_copper.loc[idx[:,3],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_app_rur_aluminium = m2_app_rur_s.mul(material_aluminium.loc[idx[:,3],:].droplevel(1).unstack(),   axis=1).sum(axis=1, level=0)   
+kg_app_rur_glass     = m2_app_rur_s.mul(material_glass.loc[idx[:,3],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)       
+kg_app_rur_brick     = m2_app_rur_s.mul(material_brick.loc[idx[:,3],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)       
 
-kg_hig_rur_steel    = m2_hig_rur * material_steel.loc[4]
-kg_hig_rur_cement   = m2_hig_rur * material_cement.loc[4]
-kg_hig_rur_concrete = m2_hig_rur * material_concrete.loc[4]
-kg_hig_rur_wood     = m2_hig_rur * material_wood.loc[4]
-kg_hig_rur_copper   = m2_hig_rur * material_copper.loc[4]
-kg_hig_rur_aluminium = m2_hig_rur * material_aluminium.loc[4]       # Adjusted in V2
-kg_hig_rur_glass    = m2_hig_rur * material_glass.loc[4]            # Adjusted in V2
+kg_hig_rur_steel     = m2_hig_rur_s.mul(material_steel.loc[idx[:,4],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)
+kg_hig_rur_cement    = m2_hig_rur_s.mul(material_cement.loc[idx[:,4],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_hig_rur_concrete  = m2_hig_rur_s.mul(material_concrete.loc[idx[:,4],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_hig_rur_wood      = m2_hig_rur_s.mul(material_wood.loc[idx[:,4],:].droplevel(1).unstack(),        axis=1).sum(axis=1, level=0)
+kg_hig_rur_copper    = m2_hig_rur_s.mul(material_copper.loc[idx[:,4],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_hig_rur_aluminium = m2_hig_rur_s.mul(material_aluminium.loc[idx[:,4],:].droplevel(1).unstack(),   axis=1).sum(axis=1, level=0)   
+kg_hig_rur_glass     = m2_hig_rur_s.mul(material_glass.loc[idx[:,4],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)       
+kg_hig_rur_brick     = m2_hig_rur_s.mul(material_brick.loc[idx[:,4],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)       
 
 # URBAN material stock (millions of kgs)
-kg_det_urb_steel    = m2_det_urb * material_steel.loc[1]
-kg_det_urb_cement   = m2_det_urb * material_cement.loc[1]
-kg_det_urb_concrete = m2_det_urb * material_concrete.loc[1]
-kg_det_urb_wood     = m2_det_urb * material_wood.loc[1]
-kg_det_urb_copper   = m2_det_urb * material_copper.loc[1]
-kg_det_urb_aluminium  = m2_det_urb * material_aluminium.loc[1]
-kg_det_urb_glass   = m2_det_urb * material_glass.loc[1]
+kg_det_urb_steel     = m2_det_urb_s.mul(material_steel.loc[idx[:,1],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)
+kg_det_urb_cement    = m2_det_urb_s.mul(material_cement.loc[idx[:,1],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_det_urb_concrete  = m2_det_urb_s.mul(material_concrete.loc[idx[:,1],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_det_urb_wood      = m2_det_urb_s.mul(material_wood.loc[idx[:,1],:].droplevel(1).unstack(),        axis=1).sum(axis=1, level=0)
+kg_det_urb_copper    = m2_det_urb_s.mul(material_copper.loc[idx[:,1],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_det_urb_aluminium = m2_det_urb_s.mul(material_aluminium.loc[idx[:,1],:].droplevel(1).unstack(),   axis=1).sum(axis=1, level=0)
+kg_det_urb_glass     = m2_det_urb_s.mul(material_glass.loc[idx[:,1],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)
+kg_det_urb_brick     = m2_det_urb_s.mul(material_brick.loc[idx[:,1],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)
 
-kg_sem_urb_steel    = m2_sem_urb * material_steel.loc[2]
-kg_sem_urb_cement   = m2_sem_urb * material_cement.loc[2]
-kg_sem_urb_concrete = m2_sem_urb * material_concrete.loc[2]
-kg_sem_urb_wood     = m2_sem_urb * material_wood.loc[2]
-kg_sem_urb_copper   = m2_sem_urb * material_copper.loc[2]
-kg_sem_urb_aluminium  = m2_sem_urb * material_aluminium.loc[2]      # Adjusted in V2
-kg_sem_urb_glass   = m2_sem_urb * material_glass.loc[2]             # Adjusted in V2
+kg_sem_urb_steel     = m2_sem_urb_s.mul(material_steel.loc[idx[:,2],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)
+kg_sem_urb_cement    = m2_sem_urb_s.mul(material_cement.loc[idx[:,2],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_sem_urb_concrete  = m2_sem_urb_s.mul(material_concrete.loc[idx[:,2],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_sem_urb_wood      = m2_sem_urb_s.mul(material_wood.loc[idx[:,2],:].droplevel(1).unstack(),        axis=1).sum(axis=1, level=0)
+kg_sem_urb_copper    = m2_sem_urb_s.mul(material_copper.loc[idx[:,2],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_sem_urb_aluminium = m2_sem_urb_s.mul(material_aluminium.loc[idx[:,2],:].droplevel(1).unstack(),   axis=1).sum(axis=1, level=0) 
+kg_sem_urb_glass     = m2_sem_urb_s.mul(material_glass.loc[idx[:,2],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0) 
+kg_sem_urb_brick     = m2_sem_urb_s.mul(material_brick.loc[idx[:,2],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)   
 
-kg_app_urb_steel    = m2_app_urb * material_steel.loc[3]
-kg_app_urb_cement   = m2_app_urb * material_cement.loc[3]
-kg_app_urb_concrete = m2_app_urb * material_concrete.loc[3]
-kg_app_urb_wood     = m2_app_urb * material_wood.loc[3]
-kg_app_urb_copper   = m2_app_urb * material_copper.loc[3]
-kg_app_urb_aluminium  = m2_app_urb * material_aluminium.loc[3]      # Adjusted in V2
-kg_app_urb_glass   = m2_app_urb * material_glass.loc[3]             # Adjusted in V2
+kg_app_urb_steel     = m2_app_urb_s.mul(material_steel.loc[idx[:,3],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)
+kg_app_urb_cement    = m2_app_urb_s.mul(material_cement.loc[idx[:,3],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_app_urb_concrete  = m2_app_urb_s.mul(material_concrete.loc[idx[:,3],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_app_urb_wood      = m2_app_urb_s.mul(material_wood.loc[idx[:,3],:].droplevel(1).unstack(),        axis=1).sum(axis=1, level=0)
+kg_app_urb_copper    = m2_app_urb_s.mul(material_copper.loc[idx[:,3],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_app_urb_aluminium = m2_app_urb_s.mul(material_aluminium.loc[idx[:,3],:].droplevel(1).unstack(),   axis=1).sum(axis=1, level=0)
+kg_app_urb_glass     = m2_app_urb_s.mul(material_glass.loc[idx[:,3],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)  
+kg_app_urb_brick     = m2_app_urb_s.mul(material_brick.loc[idx[:,3],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)        
 
-kg_hig_urb_steel    = m2_hig_urb * material_steel.loc[4]
-kg_hig_urb_cement   = m2_hig_urb * material_cement.loc[4]
-kg_hig_urb_concrete = m2_hig_urb * material_concrete.loc[4]
-kg_hig_urb_wood     = m2_hig_urb * material_wood.loc[4]
-kg_hig_urb_copper   = m2_hig_urb * material_copper.loc[4]
-kg_hig_urb_aluminium  = m2_hig_urb * material_aluminium.loc[4]      # Adjusted in V2
-kg_hig_urb_glass   = m2_hig_urb * material_glass.loc[4]             # Adjusted in V2
+kg_hig_urb_steel     = m2_hig_urb_s.mul(material_steel.loc[idx[:,4],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)
+kg_hig_urb_cement    = m2_hig_urb_s.mul(material_cement.loc[idx[:,4],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_hig_urb_concrete  = m2_hig_urb_s.mul(material_concrete.loc[idx[:,4],:].droplevel(1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_hig_urb_wood      = m2_hig_urb_s.mul(material_wood.loc[idx[:,4],:].droplevel(1).unstack(),        axis=1).sum(axis=1, level=0)
+kg_hig_urb_copper    = m2_hig_urb_s.mul(material_copper.loc[idx[:,4],:].droplevel(1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_hig_urb_aluminium = m2_hig_urb_s.mul(material_aluminium.loc[idx[:,4],:].droplevel(1).unstack(),   axis=1).sum(axis=1, level=0) 
+kg_hig_urb_glass     = m2_hig_urb_s.mul(material_glass.loc[idx[:,4],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)    
+kg_hig_urb_brick     = m2_hig_urb_s.mul(material_brick.loc[idx[:,4],:].droplevel(1).unstack(),       axis=1).sum(axis=1, level=0)    
 
 # Commercial Building materials (in Million kg)
-kg_office_steel     = commercial_m2_office * materials_commercial['Offices']['Steel']
-kg_office_cement    = commercial_m2_office * materials_commercial['Offices']['Cement']
-kg_office_concrete  = commercial_m2_office * materials_commercial['Offices']['Concrete']
-kg_office_wood      = commercial_m2_office * materials_commercial['Offices']['Wood']
-kg_office_copper    = commercial_m2_office * materials_commercial['Offices']['Copper']
-kg_office_aluminium = commercial_m2_office * materials_commercial['Offices']['Aluminium']
-kg_office_glass     = commercial_m2_office * materials_commercial['Offices']['Glass']
+kg_office_steel     = m2_office_s.mul(material_com_steel.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_cement    = m2_office_s.mul(material_com_cement.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_office_concrete  = m2_office_s.mul(material_com_concrete.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),  axis=1).sum(axis=1, level=0)
+kg_office_wood      = m2_office_s.mul(material_com_wood.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_office_copper    = m2_office_s.mul(material_com_copper.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_office_aluminium = m2_office_s.mul(material_com_aluminium.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(), axis=1).sum(axis=1, level=0)
+kg_office_glass     = m2_office_s.mul(material_com_glass.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_brick     = m2_office_s.mul(material_com_brick.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_retail_steel     = commercial_m2_retail * materials_commercial['Retail+']['Steel']
-kg_retail_cement    = commercial_m2_retail * materials_commercial['Retail+']['Cement']
-kg_retail_concrete  = commercial_m2_retail * materials_commercial['Retail+']['Concrete']
-kg_retail_wood      = commercial_m2_retail * materials_commercial['Retail+']['Wood']
-kg_retail_copper    = commercial_m2_retail * materials_commercial['Retail+']['Copper']
-kg_retail_aluminium = commercial_m2_retail * materials_commercial['Retail+']['Aluminium']
-kg_retail_glass     = commercial_m2_retail * materials_commercial['Retail+']['Glass']
+kg_retail_steel     = m2_retail_s.mul(material_com_steel.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_cement    = m2_retail_s.mul(material_com_cement.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_retail_concrete  = m2_retail_s.mul(material_com_concrete.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),  axis=1).sum(axis=1, level=0)
+kg_retail_wood      = m2_retail_s.mul(material_com_wood.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_retail_copper    = m2_retail_s.mul(material_com_copper.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_retail_aluminium = m2_retail_s.mul(material_com_aluminium.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(), axis=1).sum(axis=1, level=0)
+kg_retail_glass     = m2_retail_s.mul(material_com_glass.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_brick     = m2_retail_s.mul(material_com_brick.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_hotels_steel     = commercial_m2_hotels * materials_commercial['Hotels+']['Steel']
-kg_hotels_cement    = commercial_m2_hotels * materials_commercial['Hotels+']['Cement']
-kg_hotels_concrete  = commercial_m2_hotels * materials_commercial['Hotels+']['Concrete']
-kg_hotels_wood      = commercial_m2_hotels * materials_commercial['Hotels+']['Wood']
-kg_hotels_copper    = commercial_m2_hotels * materials_commercial['Hotels+']['Copper']
-kg_hotels_aluminium = commercial_m2_hotels * materials_commercial['Hotels+']['Aluminium']
-kg_hotels_glass     = commercial_m2_hotels * materials_commercial['Hotels+']['Glass']
+kg_hotels_steel     = m2_hotels_s.mul(material_com_steel.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_cement    = m2_hotels_s.mul(material_com_cement.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_hotels_concrete  = m2_hotels_s.mul(material_com_concrete.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),  axis=1).sum(axis=1, level=0)
+kg_hotels_wood      = m2_hotels_s.mul(material_com_wood.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_hotels_copper    = m2_hotels_s.mul(material_com_copper.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),    axis=1).sum(axis=1, level=0)
+kg_hotels_aluminium = m2_hotels_s.mul(material_com_aluminium.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(), axis=1).sum(axis=1, level=0)
+kg_hotels_glass     = m2_hotels_s.mul(material_com_glass.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_brick     = m2_hotels_s.mul(material_com_brick.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_govern_steel     = commercial_m2_govern * materials_commercial['Govt+']['Steel']
-kg_govern_cement    = commercial_m2_govern * materials_commercial['Govt+']['Cement']
-kg_govern_concrete  = commercial_m2_govern * materials_commercial['Govt+']['Concrete']
-kg_govern_wood      = commercial_m2_govern * materials_commercial['Govt+']['Wood']
-kg_govern_copper    = commercial_m2_govern * materials_commercial['Govt+']['Copper']
-kg_govern_aluminium = commercial_m2_govern * materials_commercial['Govt+']['Aluminium']
-kg_govern_glass     = commercial_m2_govern * materials_commercial['Govt+']['Glass']
+kg_govern_steel     = m2_govern_s.mul(material_com_steel.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_govern_cement    = m2_govern_s.mul(material_com_cement.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_concrete  = m2_govern_s.mul(material_com_concrete.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),   axis=1).sum(axis=1, level=0)
+kg_govern_wood      = m2_govern_s.mul(material_com_wood.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),       axis=1).sum(axis=1, level=0)
+kg_govern_copper    = m2_govern_s.mul(material_com_copper.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_aluminium = m2_govern_s.mul(material_com_aluminium.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),  axis=1).sum(axis=1, level=0)
+kg_govern_glass     = m2_govern_s.mul(material_com_glass.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),      axis=1).sum(axis=1, level=0)
+kg_govern_brick     = m2_govern_s.mul(material_com_brick.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),      axis=1).sum(axis=1, level=0)
 
 # Summing commercial material stock (Million kg)
 kg_steel_comm       = kg_office_steel + kg_retail_steel + kg_hotels_steel + kg_govern_steel
@@ -502,296 +644,229 @@ kg_copper   = kg_copper_urb + kg_copper_rur + kg_copper_comm
 kg_aluminium = kg_aluminium_urb + kg_aluminium_rur + kg_aluminium_comm
 kg_glass   = kg_glass_urb + kg_glass_rur + kg_glass_comm
 
-
-#%% INFLOW & OUTFLOW
-
-import sys 
-sys.path.append('C:\\Users\\...') # SET YOUR PATH HERE
-import dynamic_stock_model   
-from dynamic_stock_model import DynamicStockModel as DSM
-
-if flag_Normal == 0:
-    lifetimes_DB = pd.read_csv('files_lifetimes\lifetimes.csv')  # Weibull parameter database (shape & scale parameters given by region, area & building-type)
-else:
-    lifetimes_DB = pd.read_csv('files_lifetimes\lifetimes_normal.csv')  # Normal distribution database (Mean & StDev parameters given by region, area & building-type, though only defined by region for now)
-
-# actual inflow calculations
-def inflow_outflow(shape, scale, stock, length):            # length is the number of years in the entire period
-
-    out_o_reg = pd.DataFrame(index=range(1721,2051), columns=range(1,27))
-    out_i_reg = pd.DataFrame(index=range(1721,2051), columns=range(1,27))
-    out_s_reg = pd.DataFrame(index=range(1721,2051), columns=range(1,27))
-    
-    for region in range(0,26):
-        shape_list = [shape[region] for i in range(0,length)]    
-        scale_list = [scale[region] for i in range(0,length)] 
-        
-        if flag_Normal == 0:
-            DSMforward = DSM(t = np.arange(0,length,1), s=np.array(stock[region+1]), lt = {'Type': 'Weibull', 'Shape': np.array(shape_list), 'Scale': np.array(scale_list)})
-        else:
-            DSMforward = DSM(t = np.arange(0,length,1), s=np.array(stock[region+1]), lt = {'Type': 'FoldNorm', 'Mean': np.array(shape_list), 'StdDev': np.array(scale_list)}) # shape & scale list are actually Mean & StDev here
-        
-        out_sc, out_oc, out_i = DSMforward.compute_stock_driven_model(NegativeInflowCorrect = True)
-        
-        # (for now) We're only interested in the total outflow, so we sum the outflow by cohort each year
-        out_o_reg[region+1] = out_oc.sum(axis=1)
-        out_s_reg[region+1] = out_sc.sum(axis=1)
-        out_o_reg_corr = out_o_reg._get_numeric_data()        
-        out_o_reg_corr[out_o_reg_corr < 0] = 0            # remove negative outflow, replace by 0
-        out_i_reg[region+1] = out_i
-    
-    return out_o_reg_corr, out_i_reg
-
-
-length = len(m2_hig_urb[1])  # = 330
-
-# the code to select the right shape & scale parameter from the database (lifetime_DB) is rather bulky, so we prepare a set of scale & shape parameters, instead of doing so 'in-line' when calling the stock model 
-shape_selection_m2_det_rur = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Detached')])
-scale_selection_m2_det_rur = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Detached')])
-shape_selection_m2_sem_rur = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Semi-detached')])
-scale_selection_m2_sem_rur = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Semi-detached')])
-shape_selection_m2_app_rur = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Appartments')])
-scale_selection_m2_app_rur = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'Appartments')])
-shape_selection_m2_hig_rur = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'High-rise')])
-scale_selection_m2_hig_rur = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Rural') & (lifetimes_DB['Type'] == 'High-rise')])
-shape_selection_m2_det_urb = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Detached')])
-scale_selection_m2_det_urb = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Detached')])
-shape_selection_m2_sem_urb = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Semi-detached')])
-scale_selection_m2_sem_urb = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Semi-detached')])
-shape_selection_m2_app_urb = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Appartments')])
-scale_selection_m2_app_urb = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'Appartments')])
-shape_selection_m2_hig_urb = np.array(lifetimes_DB['Shape'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'High-rise')])
-scale_selection_m2_hig_urb = np.array(lifetimes_DB['Scale'].loc[(lifetimes_DB['Area'] == 'Urban') & (lifetimes_DB['Type'] == 'High-rise')])
-
-# Hardcoded lifetime parameters for COMMERCIAL building lifetime (avg. lt = 45 yr)
-if flag_Normal == 0:
-    scale_comm = np.array([49.567] * 26) # Weibull scale
-    shape_comm = np.array([1.443] * 26)  # Weibull shape
-else: 
-    scale_comm = np.array([14] * 26)	# StDev in case of Normal distribution
-    shape_comm = np.array([45] * 26)    # Mean in case of Normal distribution
-
-# call the actual stock model to derive inflow & outflow based on stock & lifetime
-m2_det_rur_o, m2_det_rur_i = inflow_outflow(shape_selection_m2_det_rur, scale_selection_m2_det_rur, m2_det_rur, length)
-m2_sem_rur_o, m2_sem_rur_i = inflow_outflow(shape_selection_m2_sem_rur, scale_selection_m2_sem_rur, m2_sem_rur, length)
-m2_app_rur_o, m2_app_rur_i = inflow_outflow(shape_selection_m2_app_rur, scale_selection_m2_app_rur, m2_app_rur, length)
-m2_hig_rur_o, m2_hig_rur_i = inflow_outflow(shape_selection_m2_hig_rur, scale_selection_m2_hig_rur, m2_hig_rur, length)
-
-m2_det_urb_o, m2_det_urb_i = inflow_outflow(shape_selection_m2_det_urb, scale_selection_m2_det_urb, m2_det_urb, length)
-m2_sem_urb_o, m2_sem_urb_i = inflow_outflow(shape_selection_m2_sem_urb, scale_selection_m2_sem_urb, m2_sem_urb, length)
-m2_app_urb_o, m2_app_urb_i = inflow_outflow(shape_selection_m2_app_urb, scale_selection_m2_app_urb, m2_app_urb, length)
-m2_hig_urb_o, m2_hig_urb_i = inflow_outflow(shape_selection_m2_hig_urb, scale_selection_m2_hig_urb, m2_hig_urb, length)
-
-m2_office_o, m2_office_i   = inflow_outflow(shape_comm, scale_comm, commercial_m2_office, length)
-m2_retail_o, m2_retail_i   = inflow_outflow(shape_comm, scale_comm, commercial_m2_retail, length)
-m2_hotels_o, m2_hotels_i   = inflow_outflow(shape_comm, scale_comm, commercial_m2_hotels, length)
-m2_govern_o, m2_govern_i   = inflow_outflow(shape_comm, scale_comm, commercial_m2_govern, length)
-
-# total MILLIONS of square meters inflow & outflow
-m2_res_o = m2_det_rur_o + m2_sem_rur_o + m2_app_rur_o + m2_hig_rur_o + m2_det_urb_o + m2_sem_urb_o + m2_app_urb_o + m2_hig_urb_o
-m2_res_i = m2_det_rur_i + m2_sem_rur_i + m2_app_rur_i + m2_hig_rur_i + m2_det_urb_i + m2_sem_urb_i + m2_app_urb_i + m2_hig_urb_i
-m2_comm_o = m2_office_o + m2_retail_o + m2_hotels_o + m2_govern_o
-m2_comm_i = m2_office_i + m2_retail_i + m2_hotels_i + m2_govern_i
-
-#%% Material inflow & outflow
+#%% Material inflow & outflow & stock
 
 # RURAL material inlow (Millions of kgs = *1000 tons)
-kg_det_rur_steel_i    = m2_det_rur_i * material_steel.loc[1]
-kg_det_rur_cement_i   = m2_det_rur_i * material_cement.loc[1]
-kg_det_rur_concrete_i = m2_det_rur_i * material_concrete.loc[1]
-kg_det_rur_wood_i     = m2_det_rur_i * material_wood.loc[1]
-kg_det_rur_copper_i   = m2_det_rur_i * material_copper.loc[1]
-kg_det_rur_aluminium_i = m2_det_rur_i * material_aluminium.loc[1]
-kg_det_rur_glass_i    = m2_det_rur_i * material_glass.loc[1]
+kg_det_rur_steel_i     = m2_det_rur_i.mul(material_steel.loc[idx[:,1],:].droplevel(1))
+kg_det_rur_cement_i    = m2_det_rur_i.mul(material_cement.loc[idx[:,1],:].droplevel(1))
+kg_det_rur_concrete_i  = m2_det_rur_i.mul(material_concrete.loc[idx[:,1],:].droplevel(1))
+kg_det_rur_wood_i      = m2_det_rur_i.mul(material_wood.loc[idx[:,1],:].droplevel(1))
+kg_det_rur_copper_i    = m2_det_rur_i.mul(material_copper.loc[idx[:,1],:].droplevel(1))
+kg_det_rur_aluminium_i = m2_det_rur_i.mul(material_aluminium.loc[idx[:,1],:].droplevel(1))
+kg_det_rur_glass_i     = m2_det_rur_i.mul(material_glass.loc[idx[:,1],:].droplevel(1))
+kg_det_rur_brick_i     = m2_det_rur_i.mul(material_brick.loc[idx[:,1],:].droplevel(1))
 
-kg_sem_rur_steel_i    = m2_sem_rur_i * material_steel.loc[2]
-kg_sem_rur_cement_i   = m2_sem_rur_i * material_cement.loc[2]
-kg_sem_rur_concrete_i = m2_sem_rur_i * material_concrete.loc[2]
-kg_sem_rur_wood_i     = m2_sem_rur_i * material_wood.loc[2]
-kg_sem_rur_copper_i   = m2_sem_rur_i * material_copper.loc[2]
-kg_sem_rur_aluminium_i = m2_sem_rur_i * material_aluminium.loc[2]       # Adjusted in V2
-kg_sem_rur_glass_i    = m2_sem_rur_i * material_glass.loc[2]            # Adjusted in V2
+kg_sem_rur_steel_i     = m2_sem_rur_i.mul(material_steel.loc[idx[:,2],:].droplevel(1))
+kg_sem_rur_cement_i    = m2_sem_rur_i.mul(material_cement.loc[idx[:,2],:].droplevel(1))
+kg_sem_rur_concrete_i  = m2_sem_rur_i.mul(material_concrete.loc[idx[:,2],:].droplevel(1))
+kg_sem_rur_wood_i      = m2_sem_rur_i.mul(material_wood.loc[idx[:,2],:].droplevel(1))
+kg_sem_rur_copper_i    = m2_sem_rur_i.mul(material_copper.loc[idx[:,2],:].droplevel(1))
+kg_sem_rur_aluminium_i = m2_sem_rur_i.mul(material_aluminium.loc[idx[:,2],:].droplevel(1)) 
+kg_sem_rur_glass_i     = m2_sem_rur_i.mul(material_glass.loc[idx[:,2],:].droplevel(1))     
+kg_sem_rur_brick_i     = m2_sem_rur_i.mul(material_brick.loc[idx[:,2],:].droplevel(1))     
 
-kg_app_rur_steel_i    = m2_app_rur_i * material_steel.loc[3]
-kg_app_rur_cement_i   = m2_app_rur_i * material_cement.loc[3]
-kg_app_rur_concrete_i = m2_app_rur_i * material_concrete.loc[3]
-kg_app_rur_wood_i     = m2_app_rur_i * material_wood.loc[3]
-kg_app_rur_copper_i   = m2_app_rur_i * material_copper.loc[3]
-kg_app_rur_aluminium_i = m2_app_rur_i * material_aluminium.loc[3]       # Adjusted in V2
-kg_app_rur_glass_i    = m2_app_rur_i * material_glass.loc[3]            # Adjusted in V2
+kg_app_rur_steel_i     = m2_app_rur_i.mul(material_steel.loc[idx[:,3],:].droplevel(1))
+kg_app_rur_cement_i    = m2_app_rur_i.mul(material_cement.loc[idx[:,3],:].droplevel(1))
+kg_app_rur_concrete_i  = m2_app_rur_i.mul(material_concrete.loc[idx[:,3],:].droplevel(1))
+kg_app_rur_wood_i      = m2_app_rur_i.mul(material_wood.loc[idx[:,3],:].droplevel(1))
+kg_app_rur_copper_i    = m2_app_rur_i.mul(material_copper.loc[idx[:,3],:].droplevel(1))
+kg_app_rur_aluminium_i = m2_app_rur_i.mul(material_aluminium.loc[idx[:,3],:].droplevel(1))  
+kg_app_rur_glass_i     = m2_app_rur_i.mul(material_glass.loc[idx[:,3],:].droplevel(1))     
+kg_app_rur_brick_i     = m2_app_rur_i.mul(material_brick.loc[idx[:,3],:].droplevel(1))     
 
-kg_hig_rur_steel_i    = m2_hig_rur_i * material_steel.loc[4]
-kg_hig_rur_cement_i   = m2_hig_rur_i * material_cement.loc[4]
-kg_hig_rur_concrete_i = m2_hig_rur_i * material_concrete.loc[4]
-kg_hig_rur_wood_i     = m2_hig_rur_i * material_wood.loc[4]
-kg_hig_rur_copper_i   = m2_hig_rur_i * material_copper.loc[4]
-kg_hig_rur_aluminium_i = m2_hig_rur_i * material_aluminium.loc[4]       # Adjusted in V2
-kg_hig_rur_glass_i    = m2_hig_rur_i * material_glass.loc[4]            # Adjusted in V2
+kg_hig_rur_steel_i     = m2_hig_rur_i.mul(material_steel.loc[idx[:,4],:].droplevel(1))
+kg_hig_rur_cement_i    = m2_hig_rur_i.mul(material_cement.loc[idx[:,4],:].droplevel(1))
+kg_hig_rur_concrete_i  = m2_hig_rur_i.mul(material_concrete.loc[idx[:,4],:].droplevel(1))
+kg_hig_rur_wood_i      = m2_hig_rur_i.mul(material_wood.loc[idx[:,4],:].droplevel(1))
+kg_hig_rur_copper_i    = m2_hig_rur_i.mul(material_copper.loc[idx[:,4],:].droplevel(1))
+kg_hig_rur_aluminium_i = m2_hig_rur_i.mul(material_aluminium.loc[idx[:,4],:].droplevel(1))  
+kg_hig_rur_glass_i     = m2_hig_rur_i.mul(material_glass.loc[idx[:,4],:].droplevel(1))        
+kg_hig_rur_brick_i     = m2_hig_rur_i.mul(material_brick.loc[idx[:,4],:].droplevel(1))        
 
 # URBAN material inflow (millions of kgs)
-kg_det_urb_steel_i    = m2_det_urb_i * material_steel.loc[1]
-kg_det_urb_cement_i   = m2_det_urb_i * material_cement.loc[1]
-kg_det_urb_concrete_i = m2_det_urb_i * material_concrete.loc[1]
-kg_det_urb_wood_i     = m2_det_urb_i * material_wood.loc[1]
-kg_det_urb_copper_i   = m2_det_urb_i * material_copper.loc[1]
-kg_det_urb_aluminium_i  = m2_det_urb_i * material_aluminium.loc[1]
-kg_det_urb_glass_i   = m2_det_urb_i * material_glass.loc[1]
+kg_det_urb_steel_i     = m2_det_urb_i.mul(material_steel.loc[idx[:,1],:].droplevel(1))
+kg_det_urb_cement_i    = m2_det_urb_i.mul(material_cement.loc[idx[:,1],:].droplevel(1))
+kg_det_urb_concrete_i  = m2_det_urb_i.mul(material_concrete.loc[idx[:,1],:].droplevel(1))
+kg_det_urb_wood_i      = m2_det_urb_i.mul(material_wood.loc[idx[:,1],:].droplevel(1))
+kg_det_urb_copper_i    = m2_det_urb_i.mul(material_copper.loc[idx[:,1],:].droplevel(1))
+kg_det_urb_aluminium_i = m2_det_urb_i.mul(material_aluminium.loc[idx[:,1],:].droplevel(1))
+kg_det_urb_glass_i     = m2_det_urb_i.mul(material_glass.loc[idx[:,1],:].droplevel(1))
+kg_det_urb_brick_i     = m2_det_urb_i.mul(material_brick.loc[idx[:,1],:].droplevel(1))
 
-kg_sem_urb_steel_i    = m2_sem_urb_i * material_steel.loc[2]
-kg_sem_urb_cement_i   = m2_sem_urb_i * material_cement.loc[2]
-kg_sem_urb_concrete_i = m2_sem_urb_i * material_concrete.loc[2]
-kg_sem_urb_wood_i     = m2_sem_urb_i * material_wood.loc[2]
-kg_sem_urb_copper_i   = m2_sem_urb_i * material_copper.loc[2]
-kg_sem_urb_aluminium_i  = m2_sem_urb_i * material_aluminium.loc[2]      # Adjusted in V2
-kg_sem_urb_glass_i    = m2_sem_urb_i * material_glass.loc[2]            # Adjusted in V2
+kg_sem_urb_steel_i     = m2_sem_urb_i.mul(material_steel.loc[idx[:,2],:].droplevel(1))
+kg_sem_urb_cement_i    = m2_sem_urb_i.mul(material_cement.loc[idx[:,2],:].droplevel(1))
+kg_sem_urb_concrete_i  = m2_sem_urb_i.mul(material_concrete.loc[idx[:,2],:].droplevel(1))
+kg_sem_urb_wood_i      = m2_sem_urb_i.mul(material_wood.loc[idx[:,2],:].droplevel(1))
+kg_sem_urb_copper_i    = m2_sem_urb_i.mul(material_copper.loc[idx[:,2],:].droplevel(1))
+kg_sem_urb_aluminium_i = m2_sem_urb_i.mul(material_aluminium.loc[idx[:,2],:].droplevel(1))  
+kg_sem_urb_glass_i     = m2_sem_urb_i.mul(material_glass.loc[idx[:,2],:].droplevel(1))    
+kg_sem_urb_brick_i     = m2_sem_urb_i.mul(material_brick.loc[idx[:,2],:].droplevel(1))    
 
-kg_app_urb_steel_i    = m2_app_urb_i * material_steel.loc[3]
-kg_app_urb_cement_i   = m2_app_urb_i * material_cement.loc[3]
-kg_app_urb_concrete_i = m2_app_urb_i * material_concrete.loc[3]
-kg_app_urb_wood_i     = m2_app_urb_i * material_wood.loc[3]
-kg_app_urb_copper_i   = m2_app_urb_i * material_copper.loc[3]
-kg_app_urb_aluminium_i  = m2_app_urb_i * material_aluminium.loc[3]      # Adjusted in V2
-kg_app_urb_glass_i   = m2_app_urb_i * material_glass.loc[3]             # Adjusted in V2
+kg_app_urb_steel_i     = m2_app_urb_i.mul(material_steel.loc[idx[:,3],:].droplevel(1))
+kg_app_urb_cement_i    = m2_app_urb_i.mul(material_cement.loc[idx[:,3],:].droplevel(1))
+kg_app_urb_concrete_i  = m2_app_urb_i.mul(material_concrete.loc[idx[:,3],:].droplevel(1))
+kg_app_urb_wood_i      = m2_app_urb_i.mul(material_wood.loc[idx[:,3],:].droplevel(1))
+kg_app_urb_copper_i    = m2_app_urb_i.mul(material_copper.loc[idx[:,3],:].droplevel(1))
+kg_app_urb_aluminium_i = m2_app_urb_i.mul(material_aluminium.loc[idx[:,3],:].droplevel(1))
+kg_app_urb_glass_i     = m2_app_urb_i.mul(material_glass.loc[idx[:,3],:].droplevel(1))
+kg_app_urb_brick_i     = m2_app_urb_i.mul(material_brick.loc[idx[:,3],:].droplevel(1))
 
-kg_hig_urb_steel_i    = m2_hig_urb_i * material_steel.loc[4]
-kg_hig_urb_cement_i   = m2_hig_urb_i * material_cement.loc[4]
-kg_hig_urb_concrete_i = m2_hig_urb_i * material_concrete.loc[4]
-kg_hig_urb_wood_i     = m2_hig_urb_i * material_wood.loc[4]
-kg_hig_urb_copper_i   = m2_hig_urb_i * material_copper.loc[4]
-kg_hig_urb_aluminium_i  = m2_hig_urb_i * material_aluminium.loc[4]      # Adjusted in V2
-kg_hig_urb_glass_i   = m2_hig_urb_i * material_glass.loc[4]             # Adjusted in V2
+kg_hig_urb_steel_i     = m2_hig_urb_i.mul(material_steel.loc[idx[:,4],:].droplevel(1))
+kg_hig_urb_cement_i    = m2_hig_urb_i.mul(material_cement.loc[idx[:,4],:].droplevel(1))
+kg_hig_urb_concrete_i  = m2_hig_urb_i.mul(material_concrete.loc[idx[:,4],:].droplevel(1))
+kg_hig_urb_wood_i      = m2_hig_urb_i.mul(material_wood.loc[idx[:,4],:].droplevel(1))
+kg_hig_urb_copper_i    = m2_hig_urb_i.mul(material_copper.loc[idx[:,4],:].droplevel(1))
+kg_hig_urb_aluminium_i = m2_hig_urb_i.mul(material_aluminium.loc[idx[:,4],:].droplevel(1))
+kg_hig_urb_glass_i     = m2_hig_urb_i.mul(material_glass.loc[idx[:,4],:].droplevel(1))
+kg_hig_urb_brick_i     = m2_hig_urb_i.mul(material_brick.loc[idx[:,4],:].droplevel(1))
 
 # RURAL material OUTflow (Millions of kgs = *1000 tons)
-kg_det_rur_steel_o    = m2_det_rur_o * material_steel.loc[1]
-kg_det_rur_cement_o   = m2_det_rur_o * material_cement.loc[1]
-kg_det_rur_concrete_o = m2_det_rur_o * material_concrete.loc[1]
-kg_det_rur_wood_o     = m2_det_rur_o * material_wood.loc[1]
-kg_det_rur_copper_o   = m2_det_rur_o * material_copper.loc[1]
-kg_det_rur_aluminium_o = m2_det_rur_o * material_aluminium.loc[1]
-kg_det_rur_glass_o    = m2_det_rur_o * material_glass.loc[1]
+kg_det_rur_steel_o     = m2_det_rur_o.mul(material_steel.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_cement_o    = m2_det_rur_o.mul(material_cement.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_concrete_o  = m2_det_rur_o.mul(material_concrete.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_wood_o      = m2_det_rur_o.mul(material_wood.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_copper_o    = m2_det_rur_o.mul(material_copper.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_aluminium_o = m2_det_rur_o.mul(material_aluminium.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_glass_o     = m2_det_rur_o.mul(material_glass.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_rur_brick_o     = m2_det_rur_o.mul(material_brick.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_sem_rur_steel_o    = m2_sem_rur_o * material_steel.loc[2]
-kg_sem_rur_cement_o   = m2_sem_rur_o * material_cement.loc[2]
-kg_sem_rur_concrete_o = m2_sem_rur_o * material_concrete.loc[2]
-kg_sem_rur_wood_o     = m2_sem_rur_o * material_wood.loc[2]
-kg_sem_rur_copper_o   = m2_sem_rur_o * material_copper.loc[2]
-kg_sem_rur_aluminium_o = m2_sem_rur_o * material_aluminium.loc[2]       # Adjusted in V2
-kg_sem_rur_glass_o    = m2_sem_rur_o * material_glass.loc[2]            # Adjusted in V2
+kg_sem_rur_steel_o     = m2_sem_rur_o.mul(material_steel.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_rur_cement_o    = m2_sem_rur_o.mul(material_cement.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_rur_concrete_o  = m2_sem_rur_o.mul(material_concrete.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_rur_wood_o      = m2_sem_rur_o.mul(material_wood.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_rur_copper_o    = m2_sem_rur_o.mul(material_copper.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_rur_aluminium_o = m2_sem_rur_o.mul(material_aluminium.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)   
+kg_sem_rur_glass_o     = m2_sem_rur_o.mul(material_glass.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)  
+kg_sem_rur_brick_o     = m2_sem_rur_o.mul(material_brick.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)  
 
-kg_app_rur_steel_o    = m2_app_rur_o * material_steel.loc[3]
-kg_app_rur_cement_o   = m2_app_rur_o * material_cement.loc[3]
-kg_app_rur_concrete_o = m2_app_rur_o * material_concrete.loc[3]
-kg_app_rur_wood_o     = m2_app_rur_o * material_wood.loc[3]
-kg_app_rur_copper_o   = m2_app_rur_o * material_copper.loc[3]
-kg_app_rur_aluminium_o = m2_app_rur_o * material_aluminium.loc[3]       # Adjusted in V2
-kg_app_rur_glass_o    = m2_app_rur_o * material_glass.loc[3]            # Adjusted in V2
+kg_app_rur_steel_o     = m2_app_rur_o.mul(material_steel.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_rur_cement_o    = m2_app_rur_o.mul(material_cement.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_rur_concrete_o  = m2_app_rur_o.mul(material_concrete.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_rur_wood_o      = m2_app_rur_o.mul(material_wood.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_rur_copper_o    = m2_app_rur_o.mul(material_copper.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_rur_aluminium_o = m2_app_rur_o.mul(material_aluminium.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)   
+kg_app_rur_glass_o     = m2_app_rur_o.mul(material_glass.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_rur_brick_o     = m2_app_rur_o.mul(material_brick.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_hig_rur_steel_o    = m2_hig_rur_o * material_steel.loc[4]
-kg_hig_rur_cement_o   = m2_hig_rur_o * material_cement.loc[4]
-kg_hig_rur_concrete_o = m2_hig_rur_o * material_concrete.loc[4]
-kg_hig_rur_wood_o     = m2_hig_rur_o * material_wood.loc[4]
-kg_hig_rur_copper_o   = m2_hig_rur_o * material_copper.loc[4]
-kg_hig_rur_aluminium_o = m2_hig_rur_o * material_aluminium.loc[4]       # Adjusted in V2
-kg_hig_rur_glass_o    = m2_hig_rur_o * material_glass.loc[4]            # Adjusted in V2
+kg_hig_rur_steel_o     = m2_hig_rur_o.mul(material_steel.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_rur_cement_o    = m2_hig_rur_o.mul(material_cement.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_rur_concrete_o  = m2_hig_rur_o.mul(material_concrete.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_rur_wood_o      = m2_hig_rur_o.mul(material_wood.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_rur_copper_o    = m2_hig_rur_o.mul(material_copper.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_rur_aluminium_o = m2_hig_rur_o.mul(material_aluminium.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_rur_glass_o     = m2_hig_rur_o.mul(material_glass.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_rur_brick_o     = m2_hig_rur_o.mul(material_brick.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
 
 # URBAN material OUTflow (millions of kgs)
-kg_det_urb_steel_o    = m2_det_urb_o * material_steel.loc[1]
-kg_det_urb_cement_o   = m2_det_urb_o * material_cement.loc[1]
-kg_det_urb_concrete_o = m2_det_urb_o * material_concrete.loc[1]
-kg_det_urb_wood_o     = m2_det_urb_o * material_wood.loc[1]
-kg_det_urb_copper_o   = m2_det_urb_o * material_copper.loc[1]
-kg_det_urb_aluminium_o  = m2_det_urb_o * material_aluminium.loc[1]
-kg_det_urb_glass_o   = m2_det_urb_o * material_glass.loc[1]
+kg_det_urb_steel_o     = m2_det_urb_o.mul(material_steel.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_urb_cement_o    = m2_det_urb_o.mul(material_cement.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_urb_concrete_o  = m2_det_urb_o.mul(material_concrete.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_urb_wood_o      = m2_det_urb_o.mul(material_wood.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_urb_copper_o    = m2_det_urb_o.mul(material_copper.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_urb_aluminium_o = m2_det_urb_o.mul(material_aluminium.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_urb_glass_o     = m2_det_urb_o.mul(material_glass.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_det_urb_brick_o     = m2_det_urb_o.mul(material_brick.loc[idx[:,1],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_sem_urb_steel_o    = m2_sem_urb_o * material_steel.loc[2]
-kg_sem_urb_cement_o   = m2_sem_urb_o * material_cement.loc[2]
-kg_sem_urb_concrete_o = m2_sem_urb_o * material_concrete.loc[2]
-kg_sem_urb_wood_o     = m2_sem_urb_o * material_wood.loc[2]
-kg_sem_urb_copper_o   = m2_sem_urb_o * material_copper.loc[2]
-kg_sem_urb_aluminium_o  = m2_sem_urb_o * material_aluminium.loc[2]      # Adjusted in V2
-kg_sem_urb_glass_o    = m2_sem_urb_o * material_glass.loc[2]            # Adjusted in V2
+kg_sem_urb_steel_o     = m2_sem_urb_o.mul(material_steel.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_urb_cement_o    = m2_sem_urb_o.mul(material_cement.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_urb_concrete_o  = m2_sem_urb_o.mul(material_concrete.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_urb_wood_o      = m2_sem_urb_o.mul(material_wood.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_urb_copper_o    = m2_sem_urb_o.mul(material_copper.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_sem_urb_aluminium_o = m2_sem_urb_o.mul(material_aluminium.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)  
+kg_sem_urb_glass_o     = m2_sem_urb_o.mul(material_glass.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)        
+kg_sem_urb_brick_o     = m2_sem_urb_o.mul(material_brick.loc[idx[:,2],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)        
 
-kg_app_urb_steel_o    = m2_app_urb_o * material_steel.loc[3]
-kg_app_urb_cement_o   = m2_app_urb_o * material_cement.loc[3]
-kg_app_urb_concrete_o = m2_app_urb_o * material_concrete.loc[3]
-kg_app_urb_wood_o     = m2_app_urb_o * material_wood.loc[3]
-kg_app_urb_copper_o   = m2_app_urb_o * material_copper.loc[3]
-kg_app_urb_aluminium_o  = m2_app_urb_o * material_aluminium.loc[3]      # Adjusted in V2
-kg_app_urb_glass_o   = m2_app_urb_o * material_glass.loc[3]             # Adjusted in V2
+kg_app_urb_steel_o     = m2_app_urb_o.mul(material_steel.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_urb_cement_o    = m2_app_urb_o.mul(material_cement.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_urb_concrete_o  = m2_app_urb_o.mul(material_concrete.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_urb_wood_o      = m2_app_urb_o.mul(material_wood.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_urb_copper_o    = m2_app_urb_o.mul(material_copper.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_app_urb_aluminium_o = m2_app_urb_o.mul(material_aluminium.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)  
+kg_app_urb_glass_o     = m2_app_urb_o.mul(material_glass.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)   
+kg_app_urb_brick_o     = m2_app_urb_o.mul(material_brick.loc[idx[:,3],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)   
 
-kg_hig_urb_steel_o    = m2_hig_urb_o * material_steel.loc[4]
-kg_hig_urb_cement_o   = m2_hig_urb_o * material_cement.loc[4]
-kg_hig_urb_concrete_o = m2_hig_urb_o * material_concrete.loc[4]
-kg_hig_urb_wood_o     = m2_hig_urb_o * material_wood.loc[4]
-kg_hig_urb_copper_o   = m2_hig_urb_o * material_copper.loc[4]
-kg_hig_urb_aluminium_o  = m2_hig_urb_o * material_aluminium.loc[4]      # Adjusted in V2
-kg_hig_urb_glass_o   = m2_hig_urb_o * material_glass.loc[4]             # Adjusted in V2
+kg_hig_urb_steel_o     = m2_hig_urb_o.mul(material_steel.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_urb_cement_o    = m2_hig_urb_o.mul(material_cement.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_urb_concrete_o  = m2_hig_urb_o.mul(material_concrete.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_urb_wood_o      = m2_hig_urb_o.mul(material_wood.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_urb_copper_o    = m2_hig_urb_o.mul(material_copper.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hig_urb_aluminium_o = m2_hig_urb_o.mul(material_aluminium.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)  
+kg_hig_urb_glass_o     = m2_hig_urb_o.mul(material_glass.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)   
+kg_hig_urb_brick_o     = m2_hig_urb_o.mul(material_brick.loc[idx[:,4],:].droplevel(1).unstack(),     axis=1).sum(axis=1, level=0)   
 
 # Commercial Building materials INFLOW (in Million kg)
-kg_office_steel_i     = m2_office_i * materials_commercial['Offices']['Steel']
-kg_office_cement_i    = m2_office_i * materials_commercial['Offices']['Cement']
-kg_office_concrete_i  = m2_office_i * materials_commercial['Offices']['Concrete']
-kg_office_wood_i      = m2_office_i * materials_commercial['Offices']['Wood']
-kg_office_copper_i    = m2_office_i * materials_commercial['Offices']['Copper']
-kg_office_aluminium_i = m2_office_i * materials_commercial['Offices']['Aluminium']
-kg_office_glass_i     = m2_office_i * materials_commercial['Offices']['Glass']
+kg_office_steel_i     = m2_office_i.mul(material_com_steel.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1))
+kg_office_cement_i    = m2_office_i.mul(material_com_cement.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1))
+kg_office_concrete_i  = m2_office_i.mul(material_com_concrete.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1))
+kg_office_wood_i      = m2_office_i.mul(material_com_wood.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1))
+kg_office_copper_i    = m2_office_i.mul(material_com_copper.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1))
+kg_office_aluminium_i = m2_office_i.mul(material_com_aluminium.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1))
+kg_office_glass_i     = m2_office_i.mul(material_com_glass.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1))
+kg_office_brick_i     = m2_office_i.mul(material_com_brick.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1))
 
-kg_retail_steel_i     = m2_retail_i * materials_commercial['Retail+']['Steel']
-kg_retail_cement_i    = m2_retail_i * materials_commercial['Retail+']['Cement']
-kg_retail_concrete_i  = m2_retail_i * materials_commercial['Retail+']['Concrete']
-kg_retail_wood_i      = m2_retail_i * materials_commercial['Retail+']['Wood']
-kg_retail_copper_i    = m2_retail_i * materials_commercial['Retail+']['Copper']
-kg_retail_aluminium_i = m2_retail_i * materials_commercial['Retail+']['Aluminium']
-kg_retail_glass_i     = m2_retail_i * materials_commercial['Retail+']['Glass']
+kg_retail_steel_i     = m2_retail_i.mul(material_com_steel.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1))
+kg_retail_cement_i    = m2_retail_i.mul(material_com_cement.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1))
+kg_retail_concrete_i  = m2_retail_i.mul(material_com_concrete.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1))
+kg_retail_wood_i      = m2_retail_i.mul(material_com_wood.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1))
+kg_retail_copper_i    = m2_retail_i.mul(material_com_copper.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1))
+kg_retail_aluminium_i = m2_retail_i.mul(material_com_aluminium.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1))
+kg_retail_glass_i     = m2_retail_i.mul(material_com_glass.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1))
+kg_retail_brick_i     = m2_retail_i.mul(material_com_brick.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1))
 
-kg_hotels_steel_i     = m2_hotels_i * materials_commercial['Hotels+']['Steel']
-kg_hotels_cement_i    = m2_hotels_i * materials_commercial['Hotels+']['Cement']
-kg_hotels_concrete_i  = m2_hotels_i * materials_commercial['Hotels+']['Concrete']
-kg_hotels_wood_i      = m2_hotels_i * materials_commercial['Hotels+']['Wood']
-kg_hotels_copper_i    = m2_hotels_i * materials_commercial['Hotels+']['Copper']
-kg_hotels_aluminium_i = m2_hotels_i * materials_commercial['Hotels+']['Aluminium']
-kg_hotels_glass_i     = m2_hotels_i * materials_commercial['Hotels+']['Glass']
+kg_hotels_steel_i     = m2_hotels_i.mul(material_com_steel.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1))
+kg_hotels_cement_i    = m2_hotels_i.mul(material_com_cement.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1))
+kg_hotels_concrete_i  = m2_hotels_i.mul(material_com_concrete.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1))
+kg_hotels_wood_i      = m2_hotels_i.mul(material_com_wood.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1))
+kg_hotels_copper_i    = m2_hotels_i.mul(material_com_copper.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1))
+kg_hotels_aluminium_i = m2_hotels_i.mul(material_com_aluminium.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1))
+kg_hotels_glass_i     = m2_hotels_i.mul(material_com_glass.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1))
+kg_hotels_brick_i     = m2_hotels_i.mul(material_com_brick.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1))
 
-kg_govern_steel_i     = m2_govern_i * materials_commercial['Govt+']['Steel']
-kg_govern_cement_i    = m2_govern_i * materials_commercial['Govt+']['Cement']
-kg_govern_concrete_i  = m2_govern_i * materials_commercial['Govt+']['Concrete']
-kg_govern_wood_i      = m2_govern_i * materials_commercial['Govt+']['Wood']
-kg_govern_copper_i    = m2_govern_i * materials_commercial['Govt+']['Copper']
-kg_govern_aluminium_i = m2_govern_i * materials_commercial['Govt+']['Aluminium']
-kg_govern_glass_i     = m2_govern_i * materials_commercial['Govt+']['Glass']
+kg_govern_steel_i     = m2_govern_i.mul(material_com_steel.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1))
+kg_govern_cement_i    = m2_govern_i.mul(material_com_cement.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1))
+kg_govern_concrete_i  = m2_govern_i.mul(material_com_concrete.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1))
+kg_govern_wood_i      = m2_govern_i.mul(material_com_wood.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1))
+kg_govern_copper_i    = m2_govern_i.mul(material_com_copper.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1))
+kg_govern_aluminium_i = m2_govern_i.mul(material_com_aluminium.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1))
+kg_govern_glass_i     = m2_govern_i.mul(material_com_glass.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1))
+kg_govern_brick_i     = m2_govern_i.mul(material_com_brick.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1))
 
 # Commercial Building materials OUTFLOW (in Million kg)
-kg_office_steel_o     = m2_office_o * materials_commercial['Offices']['Steel']
-kg_office_cement_o    = m2_office_o * materials_commercial['Offices']['Cement']
-kg_office_concrete_o  = m2_office_o * materials_commercial['Offices']['Concrete']
-kg_office_wood_o      = m2_office_o * materials_commercial['Offices']['Wood']
-kg_office_copper_o    = m2_office_o * materials_commercial['Offices']['Copper']
-kg_office_aluminium_o = m2_office_o * materials_commercial['Offices']['Aluminium']
-kg_office_glass_o     = m2_office_o * materials_commercial['Offices']['Glass']
+kg_office_steel_o     = m2_office_o.mul(material_com_steel.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_cement_o    = m2_office_o.mul(material_com_cement.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_concrete_o  = m2_office_o.mul(material_com_concrete.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_wood_o      = m2_office_o.mul(material_com_wood.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_copper_o    = m2_office_o.mul(material_com_copper.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_aluminium_o = m2_office_o.mul(material_com_aluminium.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_glass_o     = m2_office_o.mul(material_com_glass.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_office_brick_o     = m2_office_o.mul(material_com_brick.loc[:,idx[:,'Offices']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_retail_steel_o     = m2_retail_o * materials_commercial['Retail+']['Steel']
-kg_retail_cement_o    = m2_retail_o * materials_commercial['Retail+']['Cement']
-kg_retail_concrete_o  = m2_retail_o * materials_commercial['Retail+']['Concrete']
-kg_retail_wood_o      = m2_retail_o * materials_commercial['Retail+']['Wood']
-kg_retail_copper_o    = m2_retail_o * materials_commercial['Retail+']['Copper']
-kg_retail_aluminium_o = m2_retail_o * materials_commercial['Retail+']['Aluminium']
-kg_retail_glass_o     = m2_retail_o * materials_commercial['Retail+']['Glass']
+kg_retail_steel_o     = m2_retail_o.mul(material_com_steel.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_cement_o    = m2_retail_o.mul(material_com_cement.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_concrete_o  = m2_retail_o.mul(material_com_concrete.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_wood_o      = m2_retail_o.mul(material_com_wood.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_copper_o    = m2_retail_o.mul(material_com_copper.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_aluminium_o = m2_retail_o.mul(material_com_aluminium.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_glass_o     = m2_retail_o.mul(material_com_glass.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_retail_brick_o     = m2_retail_o.mul(material_com_brick.loc[:,idx[:,'Retail+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_hotels_steel_o     = m2_hotels_o * materials_commercial['Hotels+']['Steel']
-kg_hotels_cement_o    = m2_hotels_o * materials_commercial['Hotels+']['Cement']
-kg_hotels_concrete_o  = m2_hotels_o * materials_commercial['Hotels+']['Concrete']
-kg_hotels_wood_o      = m2_hotels_o * materials_commercial['Hotels+']['Wood']
-kg_hotels_copper_o    = m2_hotels_o * materials_commercial['Hotels+']['Copper']
-kg_hotels_aluminium_o = m2_hotels_o * materials_commercial['Hotels+']['Aluminium']
-kg_hotels_glass_o     = m2_hotels_o * materials_commercial['Hotels+']['Glass']
+kg_hotels_steel_o     = m2_hotels_o.mul(material_com_steel.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_cement_o    = m2_hotels_o.mul(material_com_cement.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_concrete_o  = m2_hotels_o.mul(material_com_concrete.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_wood_o      = m2_hotels_o.mul(material_com_wood.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_copper_o    = m2_hotels_o.mul(material_com_copper.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_aluminium_o = m2_hotels_o.mul(material_com_aluminium.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_glass_o     = m2_hotels_o.mul(material_com_glass.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_hotels_brick_o     = m2_hotels_o.mul(material_com_brick.loc[:,idx[:,'Hotels+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
 
-kg_govern_steel_o     = m2_govern_o * materials_commercial['Govt+']['Steel']
-kg_govern_cement_o    = m2_govern_o * materials_commercial['Govt+']['Cement']
-kg_govern_concrete_o  = m2_govern_o * materials_commercial['Govt+']['Concrete']
-kg_govern_wood_o      = m2_govern_o * materials_commercial['Govt+']['Wood']
-kg_govern_copper_o    = m2_govern_o * materials_commercial['Govt+']['Copper']
-kg_govern_aluminium_o = m2_govern_o * materials_commercial['Govt+']['Aluminium']
-kg_govern_glass_o     = m2_govern_o * materials_commercial['Govt+']['Glass']
+kg_govern_steel_o     = m2_govern_o.mul(material_com_steel.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_cement_o    = m2_govern_o.mul(material_com_cement.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_concrete_o  = m2_govern_o.mul(material_com_concrete.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_wood_o      = m2_govern_o.mul(material_com_wood.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_copper_o    = m2_govern_o.mul(material_com_copper.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_aluminium_o = m2_govern_o.mul(material_com_aluminium.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_glass_o     = m2_govern_o.mul(material_com_glass.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
+kg_govern_brick_o     = m2_govern_o.mul(material_com_brick.loc[:,idx[:,'Govt+']].droplevel(axis=1, level=1).unstack(),     axis=1).sum(axis=1, level=0)
 
 
 #%% CSV output (material stock & m2 stock)
@@ -799,1015 +874,211 @@ kg_govern_glass_o     = m2_govern_o * materials_commercial['Govt+']['Glass']
 length = 3
 tag = ['stock', 'inflow', 'outflow']
   
-# first, transpose all variables & add columns to identify material, area & appartment type
+# first, define a function to transpose + combine all variables & add columns to identify material, area & appartment type. Only for csv output
+def preprocess(stock, inflow, outflow, area, building, material):
+   output_combined = [[]] * length
+   output_combined[0] = stock.transpose()
+   output_combined[1] = inflow.transpose()
+   output_combined[2] = outflow.transpose()
+   for item in range(0,length):
+      output_combined[item].insert(0,'material', [material] * 26)
+      output_combined[item].insert(0,'area', [area] * 26)
+      output_combined[item].insert(0,'type', [building] * 26)
+      output_combined[item].insert(0,'flow', [tag[item]] * 26)
+   return output_combined
+
 # RURAL
-kg_det_rur_steel_out  = [[]] * length
-kg_det_rur_steel_out[0]  = kg_det_rur_steel.transpose()
-kg_det_rur_steel_out[1]  = kg_det_rur_steel_i.transpose()
-kg_det_rur_steel_out[2]  = kg_det_rur_steel_o.transpose()
-for item in range(0,length):
-    kg_det_rur_steel_out[item].insert(0,'material', ['steel'] * 26)
-    kg_det_rur_steel_out[item].insert(0,'area', ['rural'] * 26)
-    kg_det_rur_steel_out[item].insert(0,'type', ['detached'] * 26)
-    kg_det_rur_steel_out[item].insert(0,'flow', [tag[item]] * 26)
-    
-kg_det_rur_cement_out      = [[]] * length  
-kg_det_rur_cement_out[0]   = kg_det_rur_cement.transpose() 
-kg_det_rur_cement_out[1]   = kg_det_rur_cement_i.transpose() 
-kg_det_rur_cement_out[2]   = kg_det_rur_cement_o.transpose() 
-for item in range(0,length):
-        kg_det_rur_cement_out[item].insert(0,'material', ['cement'] * 26)
-        kg_det_rur_cement_out[item].insert(0,'area', ['rural'] * 26)
-        kg_det_rur_cement_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_rur_cement_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_det_rur_concrete_out      = [[]] * length  
-kg_det_rur_concrete_out[0]   = kg_det_rur_concrete.transpose() 
-kg_det_rur_concrete_out[1]   = kg_det_rur_concrete_i.transpose() 
-kg_det_rur_concrete_out[2]   = kg_det_rur_concrete_o.transpose() 
-for item in range(0,length):
-        kg_det_rur_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-        kg_det_rur_concrete_out[item].insert(0,'area', ['rural'] * 26)
-        kg_det_rur_concrete_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_rur_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_det_rur_steel_out     = preprocess(kg_det_rur_steel,     kg_det_rur_steel_i,     kg_det_rur_steel_o,     'rural','detached', 'steel')
+kg_det_rur_cement_out    = preprocess(kg_det_rur_cement,    kg_det_rur_cement_i,    kg_det_rur_cement_o,    'rural','detached', 'cement')
+kg_det_rur_concrete_out  = preprocess(kg_det_rur_concrete,  kg_det_rur_concrete_i,  kg_det_rur_concrete_o,  'rural','detached', 'concrete') 
+kg_det_rur_wood_out      = preprocess(kg_det_rur_wood,      kg_det_rur_wood_i,      kg_det_rur_wood_o,      'rural','detached', 'wood')  
+kg_det_rur_copper_out    = preprocess(kg_det_rur_copper,    kg_det_rur_copper_i,    kg_det_rur_copper_o,    'rural','detached', 'copper') 
+kg_det_rur_aluminium_out = preprocess(kg_det_rur_aluminium, kg_det_rur_aluminium_i, kg_det_rur_aluminium_o, 'rural','detached', 'aluminium') 
+kg_det_rur_glass_out     = preprocess(kg_det_rur_glass,     kg_det_rur_glass_i,     kg_det_rur_glass_o,     'rural','detached', 'glass')
+kg_det_rur_brick_out     = preprocess(kg_det_rur_brick,     kg_det_rur_brick_i,     kg_det_rur_brick_o,     'rural','detached', 'brick')
 
-kg_det_rur_wood_out      = [[]] * length  
-kg_det_rur_wood_out[0]   = kg_det_rur_wood.transpose() 
-kg_det_rur_wood_out[1]   = kg_det_rur_wood_i.transpose() 
-kg_det_rur_wood_out[2]   = kg_det_rur_wood_o.transpose() 
-for item in range(0,length):
-        kg_det_rur_wood_out[item].insert(0,'material', ['wood'] * 26)
-        kg_det_rur_wood_out[item].insert(0,'area', ['rural'] * 26)
-        kg_det_rur_wood_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_rur_wood_out[item].insert(0,'flow', [tag[item]] * 26)
-   
-kg_det_rur_copper_out      = [[]] * length  
-kg_det_rur_copper_out[0]   = kg_det_rur_copper.transpose() 
-kg_det_rur_copper_out[1]   = kg_det_rur_copper_i.transpose() 
-kg_det_rur_copper_out[2]   = kg_det_rur_copper_o.transpose() 
-for item in range(0,length):
-        kg_det_rur_copper_out[item].insert(0,'material', ['copper'] * 26)
-        kg_det_rur_copper_out[item].insert(0,'area', ['rural'] * 26)
-        kg_det_rur_copper_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_rur_copper_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_det_rur_aluminium_out      = [[]] * length  
-kg_det_rur_aluminium_out[0]   = kg_det_rur_aluminium.transpose() 
-kg_det_rur_aluminium_out[1]   = kg_det_rur_aluminium_i.transpose() 
-kg_det_rur_aluminium_out[2]   = kg_det_rur_aluminium_o.transpose() 
-for item in range(0,length):
-        kg_det_rur_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-        kg_det_rur_aluminium_out[item].insert(0,'area', ['rural'] * 26)
-        kg_det_rur_aluminium_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_rur_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_sem_rur_steel_out     = preprocess(kg_sem_rur_steel,     kg_sem_rur_steel_i,     kg_sem_rur_steel_o,     'rural','semi-detached', 'steel')
+kg_sem_rur_cement_out    = preprocess(kg_sem_rur_cement,    kg_sem_rur_cement_i,    kg_sem_rur_cement_o,    'rural','semi-detached', 'cement')
+kg_sem_rur_concrete_out  = preprocess(kg_sem_rur_concrete,  kg_sem_rur_concrete_i,  kg_sem_rur_concrete_o,  'rural','semi-detached', 'concrete') 
+kg_sem_rur_wood_out      = preprocess(kg_sem_rur_wood,      kg_sem_rur_wood_i,      kg_sem_rur_wood_o,      'rural','semi-detached', 'wood')  
+kg_sem_rur_copper_out    = preprocess(kg_sem_rur_copper,    kg_sem_rur_copper_i,    kg_sem_rur_copper_o,    'rural','semi-detached', 'copper') 
+kg_sem_rur_aluminium_out = preprocess(kg_sem_rur_aluminium, kg_sem_rur_aluminium_i, kg_sem_rur_aluminium_o, 'rural','semi-detached', 'aluminium') 
+kg_sem_rur_glass_out     = preprocess(kg_sem_rur_glass,     kg_sem_rur_glass_i,     kg_sem_rur_glass_o,     'rural','semi-detached', 'glass')
+kg_sem_rur_brick_out     = preprocess(kg_sem_rur_brick,     kg_sem_rur_brick_i,     kg_sem_rur_brick_o,     'rural','semi-detached', 'brick')
 
-kg_det_rur_glass_out      = [[]] * length  
-kg_det_rur_glass_out[0]   = kg_det_rur_glass.transpose() 
-kg_det_rur_glass_out[1]   = kg_det_rur_glass_i.transpose() 
-kg_det_rur_glass_out[2]   = kg_det_rur_glass_o.transpose() 
-for item in range(0,length):
-        kg_det_rur_glass_out[item].insert(0,'material', ['glass'] * 26)
-        kg_det_rur_glass_out[item].insert(0,'area', ['rural'] * 26)
-        kg_det_rur_glass_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_rur_glass_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_app_rur_steel_out     = preprocess(kg_app_rur_steel,     kg_app_rur_steel_i,     kg_app_rur_steel_o,     'rural','appartments', 'steel')
+kg_app_rur_cement_out    = preprocess(kg_app_rur_cement,    kg_app_rur_cement_i,    kg_app_rur_cement_o,    'rural','appartments', 'cement')
+kg_app_rur_concrete_out  = preprocess(kg_app_rur_concrete,  kg_app_rur_concrete_i,  kg_app_rur_concrete_o,  'rural','appartments', 'concrete') 
+kg_app_rur_wood_out      = preprocess(kg_app_rur_wood,      kg_app_rur_wood_i,      kg_app_rur_wood_o,      'rural','appartments', 'wood')  
+kg_app_rur_copper_out    = preprocess(kg_app_rur_copper,    kg_app_rur_copper_i,    kg_app_rur_copper_o,    'rural','appartments', 'copper') 
+kg_app_rur_aluminium_out = preprocess(kg_app_rur_aluminium, kg_app_rur_aluminium_i, kg_app_rur_aluminium_o, 'rural','appartments', 'aluminium') 
+kg_app_rur_glass_out     = preprocess(kg_app_rur_glass,     kg_app_rur_glass_i,     kg_app_rur_glass_o,     'rural','appartments', 'glass')
+kg_app_rur_brick_out     = preprocess(kg_app_rur_brick,     kg_app_rur_brick_i,     kg_app_rur_brick_o,     'rural','appartments', 'brick')
 
-kg_sem_rur_steel_out      = [[]] * length  
-kg_sem_rur_steel_out[0]   = kg_sem_rur_steel.transpose() 
-kg_sem_rur_steel_out[1]   = kg_sem_rur_steel_i.transpose() 
-kg_sem_rur_steel_out[2]   = kg_sem_rur_steel_o.transpose() 
-for item in range(0,length):
-        kg_sem_rur_steel_out[item].insert(0,'material', ['steel'] * 26)
-        kg_sem_rur_steel_out[item].insert(0,'area', ['rural'] * 26)
-        kg_sem_rur_steel_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_rur_steel_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_rur_cement_out      = [[]] * length  
-kg_sem_rur_cement_out[0]   = kg_sem_rur_cement.transpose() 
-kg_sem_rur_cement_out[1]   = kg_sem_rur_cement_i.transpose() 
-kg_sem_rur_cement_out[2]   = kg_sem_rur_cement_o.transpose() 
-for item in range(0,length):
-        kg_sem_rur_cement_out[item].insert(0,'material', ['cement'] * 26)
-        kg_sem_rur_cement_out[item].insert(0,'area', ['rural'] * 26)
-        kg_sem_rur_cement_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_rur_cement_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_rur_concrete_out      = [[]] * length  
-kg_sem_rur_concrete_out[0]   = kg_sem_rur_concrete.transpose() 
-kg_sem_rur_concrete_out[1]   = kg_sem_rur_concrete_i.transpose() 
-kg_sem_rur_concrete_out[2]   = kg_sem_rur_concrete_o.transpose() 
-for item in range(0,length):
-        kg_sem_rur_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-        kg_sem_rur_concrete_out[item].insert(0,'area', ['rural'] * 26)
-        kg_sem_rur_concrete_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_rur_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_rur_wood_out      = [[]] * length  
-kg_sem_rur_wood_out[0]   = kg_sem_rur_wood.transpose() 
-kg_sem_rur_wood_out[1]   = kg_sem_rur_wood_i.transpose() 
-kg_sem_rur_wood_out[2]   = kg_sem_rur_wood_o.transpose() 
-for item in range(0,length):
-        kg_sem_rur_wood_out[item].insert(0,'material', ['wood'] * 26)
-        kg_sem_rur_wood_out[item].insert(0,'area', ['rural'] * 26)
-        kg_sem_rur_wood_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_rur_wood_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_rur_copper_out      = [[]] * length  
-kg_sem_rur_copper_out[0]   = kg_sem_rur_copper.transpose() 
-kg_sem_rur_copper_out[1]   = kg_sem_rur_copper_i.transpose() 
-kg_sem_rur_copper_out[2]   = kg_sem_rur_copper_o.transpose() 
-for item in range(0,length):
-        kg_sem_rur_copper_out[item].insert(0,'material', ['copper'] * 26)
-        kg_sem_rur_copper_out[item].insert(0,'area', ['rural'] * 26)
-        kg_sem_rur_copper_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_rur_copper_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_rur_aluminium_out      = [[]] * length  
-kg_sem_rur_aluminium_out[0]   = kg_sem_rur_aluminium.transpose() 
-kg_sem_rur_aluminium_out[1]   = kg_sem_rur_aluminium_i.transpose() 
-kg_sem_rur_aluminium_out[2]   = kg_sem_rur_aluminium_o.transpose() 
-for item in range(0,length):
-        kg_sem_rur_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-        kg_sem_rur_aluminium_out[item].insert(0,'area', ['rural'] * 26)
-        kg_sem_rur_aluminium_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_rur_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_rur_glass_out      = [[]] * length  
-kg_sem_rur_glass_out[0]   = kg_sem_rur_glass.transpose() 
-kg_sem_rur_glass_out[1]   = kg_sem_rur_glass_i.transpose() 
-kg_sem_rur_glass_out[2]   = kg_sem_rur_glass_o.transpose() 
-for item in range(0,length):
-        kg_sem_rur_glass_out[item].insert(0,'material', ['glass'] * 26)
-        kg_sem_rur_glass_out[item].insert(0,'area', ['rural'] * 26)
-        kg_sem_rur_glass_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_rur_glass_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-#
-kg_app_rur_steel_out      = [[]] * length  
-kg_app_rur_steel_out[0]   = kg_app_rur_steel.transpose() 
-kg_app_rur_steel_out[1]   = kg_app_rur_steel_i.transpose() 
-kg_app_rur_steel_out[2]   = kg_app_rur_steel_o.transpose() 
-for item in range(0,length):
-        kg_app_rur_steel_out[item].insert(0,'material', ['steel'] * 26)
-        kg_app_rur_steel_out[item].insert(0,'area', ['rural'] * 26)
-        kg_app_rur_steel_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_rur_steel_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_rur_cement_out      = [[]] * length  
-kg_app_rur_cement_out[0]   = kg_app_rur_cement.transpose() 
-kg_app_rur_cement_out[1]   = kg_app_rur_cement_i.transpose() 
-kg_app_rur_cement_out[2]   = kg_app_rur_cement_o.transpose() 
-for item in range(0,length):
-        kg_app_rur_cement_out[item].insert(0,'material', ['cement'] * 26)
-        kg_app_rur_cement_out[item].insert(0,'area', ['rural'] * 26)
-        kg_app_rur_cement_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_rur_cement_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_rur_concrete_out      = [[]] * length  
-kg_app_rur_concrete_out[0]   = kg_app_rur_concrete.transpose() 
-kg_app_rur_concrete_out[1]   = kg_app_rur_concrete_i.transpose() 
-kg_app_rur_concrete_out[2]   = kg_app_rur_concrete_o.transpose() 
-for item in range(0,length):
-        kg_app_rur_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-        kg_app_rur_concrete_out[item].insert(0,'area', ['rural'] * 26)
-        kg_app_rur_concrete_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_rur_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_rur_wood_out      = [[]] * length  
-kg_app_rur_wood_out[0]   = kg_app_rur_wood.transpose() 
-kg_app_rur_wood_out[1]   = kg_app_rur_wood_i.transpose() 
-kg_app_rur_wood_out[2]   = kg_app_rur_wood_o.transpose() 
-for item in range(0,length):
-        kg_app_rur_wood_out[item].insert(0,'material', ['wood'] * 26)
-        kg_app_rur_wood_out[item].insert(0,'area', ['rural'] * 26)
-        kg_app_rur_wood_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_rur_wood_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_rur_copper_out      = [[]] * length  
-kg_app_rur_copper_out[0]   = kg_app_rur_copper.transpose() 
-kg_app_rur_copper_out[1]   = kg_app_rur_copper_i.transpose() 
-kg_app_rur_copper_out[2]   = kg_app_rur_copper_o.transpose() 
-for item in range(0,length):
-        kg_app_rur_copper_out[item].insert(0,'material', ['copper'] * 26)
-        kg_app_rur_copper_out[item].insert(0,'area', ['rural'] * 26)
-        kg_app_rur_copper_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_rur_copper_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_rur_aluminium_out      = [[]] * length  
-kg_app_rur_aluminium_out[0]   = kg_app_rur_aluminium.transpose() 
-kg_app_rur_aluminium_out[1]   = kg_app_rur_aluminium_i.transpose() 
-kg_app_rur_aluminium_out[2]   = kg_app_rur_aluminium_o.transpose() 
-for item in range(0,length):
-        kg_app_rur_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-        kg_app_rur_aluminium_out[item].insert(0,'area', ['rural'] * 26)
-        kg_app_rur_aluminium_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_rur_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_rur_glass_out      = [[]] * length  
-kg_app_rur_glass_out[0]   = kg_app_rur_glass.transpose() 
-kg_app_rur_glass_out[1]   = kg_app_rur_glass_i.transpose() 
-kg_app_rur_glass_out[2]   = kg_app_rur_glass_o.transpose() 
-for item in range(0,length):
-        kg_app_rur_glass_out[item].insert(0,'material', ['glass'] * 26)
-        kg_app_rur_glass_out[item].insert(0,'area', ['rural'] * 26)
-        kg_app_rur_glass_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_rur_glass_out[item].insert(0,'flow', [tag[item]] * 26)
-        
-kg_hig_rur_steel_out      = [[]] * length  
-kg_hig_rur_steel_out[0]   = kg_hig_rur_steel.transpose() 
-kg_hig_rur_steel_out[1]   = kg_hig_rur_steel_i.transpose() 
-kg_hig_rur_steel_out[2]   = kg_hig_rur_steel_o.transpose() 
-for item in range(0,length):
-        kg_hig_rur_steel_out[item].insert(0,'material', ['steel'] * 26)
-        kg_hig_rur_steel_out[item].insert(0,'area', ['rural'] * 26)
-        kg_hig_rur_steel_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_rur_steel_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_rur_cement_out      = [[]] * length  
-kg_hig_rur_cement_out[0]   = kg_hig_rur_cement.transpose() 
-kg_hig_rur_cement_out[1]   = kg_hig_rur_cement_i.transpose() 
-kg_hig_rur_cement_out[2]   = kg_hig_rur_cement_o.transpose() 
-for item in range(0,length):
-        kg_hig_rur_cement_out[item].insert(0,'material', ['cement'] * 26)
-        kg_hig_rur_cement_out[item].insert(0,'area', ['rural'] * 26)
-        kg_hig_rur_cement_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_rur_cement_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_rur_concrete_out      = [[]] * length  
-kg_hig_rur_concrete_out[0]   = kg_hig_rur_concrete.transpose() 
-kg_hig_rur_concrete_out[1]   = kg_hig_rur_concrete_i.transpose() 
-kg_hig_rur_concrete_out[2]   = kg_hig_rur_concrete_o.transpose() 
-for item in range(0,length):
-        kg_hig_rur_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-        kg_hig_rur_concrete_out[item].insert(0,'area', ['rural'] * 26)
-        kg_hig_rur_concrete_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_rur_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_rur_wood_out      = [[]] * length  
-kg_hig_rur_wood_out[0]   = kg_hig_rur_wood.transpose() 
-kg_hig_rur_wood_out[1]   = kg_hig_rur_wood_i.transpose() 
-kg_hig_rur_wood_out[2]   = kg_hig_rur_wood_o.transpose() 
-for item in range(0,length):
-        kg_hig_rur_wood_out[item].insert(0,'material', ['wood'] * 26)
-        kg_hig_rur_wood_out[item].insert(0,'area', ['rural'] * 26)
-        kg_hig_rur_wood_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_rur_wood_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_rur_copper_out      = [[]] * length  
-kg_hig_rur_copper_out[0]   = kg_hig_rur_copper.transpose() 
-kg_hig_rur_copper_out[1]   = kg_hig_rur_copper_i.transpose() 
-kg_hig_rur_copper_out[2]   = kg_hig_rur_copper_o.transpose() 
-for item in range(0,length):
-        kg_hig_rur_copper_out[item].insert(0,'material', ['copper'] * 26)
-        kg_hig_rur_copper_out[item].insert(0,'area', ['rural'] * 26)
-        kg_hig_rur_copper_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_rur_copper_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_rur_aluminium_out      = [[]] * length  
-kg_hig_rur_aluminium_out[0]   = kg_hig_rur_aluminium.transpose() 
-kg_hig_rur_aluminium_out[1]   = kg_hig_rur_aluminium_i.transpose() 
-kg_hig_rur_aluminium_out[2]   = kg_hig_rur_aluminium_o.transpose() 
-for item in range(0,length):
-        kg_hig_rur_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-        kg_hig_rur_aluminium_out[item].insert(0,'area', ['rural'] * 26)
-        kg_hig_rur_aluminium_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_rur_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_rur_glass_out      = [[]] * length  
-kg_hig_rur_glass_out[0]   = kg_hig_rur_glass.transpose() 
-kg_hig_rur_glass_out[1]   = kg_hig_rur_glass_i.transpose() 
-kg_hig_rur_glass_out[2]   = kg_hig_rur_glass_o.transpose() 
-for item in range(0,length):
-        kg_hig_rur_glass_out[item].insert(0,'material', ['glass'] * 26)
-        kg_hig_rur_glass_out[item].insert(0,'area', ['rural'] * 26)
-        kg_hig_rur_glass_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_rur_glass_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_hig_rur_steel_out     = preprocess(kg_hig_rur_steel,     kg_hig_rur_steel_i,     kg_hig_rur_steel_o,     'rural','high-rise', 'steel')
+kg_hig_rur_cement_out    = preprocess(kg_hig_rur_cement,    kg_hig_rur_cement_i,    kg_hig_rur_cement_o,    'rural','high-rise', 'cement')
+kg_hig_rur_concrete_out  = preprocess(kg_hig_rur_concrete,  kg_hig_rur_concrete_i,  kg_hig_rur_concrete_o,  'rural','high-rise', 'concrete') 
+kg_hig_rur_wood_out      = preprocess(kg_hig_rur_wood,      kg_hig_rur_wood_i,      kg_hig_rur_wood_o,      'rural','high-rise', 'wood')  
+kg_hig_rur_copper_out    = preprocess(kg_hig_rur_copper,    kg_hig_rur_copper_i,    kg_hig_rur_copper_o,    'rural','high-rise', 'copper') 
+kg_hig_rur_aluminium_out = preprocess(kg_hig_rur_aluminium, kg_hig_rur_aluminium_i, kg_hig_rur_aluminium_o, 'rural','high-rise', 'aluminium') 
+kg_hig_rur_glass_out     = preprocess(kg_hig_rur_glass,     kg_hig_rur_glass_i,     kg_hig_rur_glass_o,     'rural','high-rise', 'glass')
+kg_hig_rur_brick_out     = preprocess(kg_hig_rur_brick,     kg_hig_rur_brick_i,     kg_hig_rur_brick_o,     'rural','high-rise', 'brick')
 
 # URBAN 
-kg_det_urb_steel_out  = [[]] * length
-kg_det_urb_steel_out[0]  = kg_det_urb_steel.transpose()
-kg_det_urb_steel_out[1]  = kg_det_urb_steel_i.transpose()
-kg_det_urb_steel_out[2]  = kg_det_urb_steel_o.transpose()
-for item in range(0,length):
-    kg_det_urb_steel_out[item].insert(0,'material', ['steel'] * 26)
-    kg_det_urb_steel_out[item].insert(0,'area', ['urban'] * 26)
-    kg_det_urb_steel_out[item].insert(0,'type', ['detached'] * 26)
-    kg_det_urb_steel_out[item].insert(0,'flow', [tag[item]] * 26)
-    
-kg_det_urb_cement_out      = [[]] * length  
-kg_det_urb_cement_out[0]   = kg_det_urb_cement.transpose() 
-kg_det_urb_cement_out[1]   = kg_det_urb_cement_i.transpose() 
-kg_det_urb_cement_out[2]   = kg_det_urb_cement_o.transpose() 
-for item in range(0,length):
-        kg_det_urb_cement_out[item].insert(0,'material', ['cement'] * 26)
-        kg_det_urb_cement_out[item].insert(0,'area', ['urban'] * 26)
-        kg_det_urb_cement_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_urb_cement_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_det_urb_concrete_out      = [[]] * length  
-kg_det_urb_concrete_out[0]   = kg_det_urb_concrete.transpose() 
-kg_det_urb_concrete_out[1]   = kg_det_urb_concrete_i.transpose() 
-kg_det_urb_concrete_out[2]   = kg_det_urb_concrete_o.transpose() 
-for item in range(0,length):
-        kg_det_urb_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-        kg_det_urb_concrete_out[item].insert(0,'area', ['urban'] * 26)
-        kg_det_urb_concrete_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_urb_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_det_urb_steel_out     = preprocess(kg_det_urb_steel,     kg_det_urb_steel_i,     kg_det_urb_steel_o,     'urban','detached', 'steel')
+kg_det_urb_cement_out    = preprocess(kg_det_urb_cement,    kg_det_urb_cement_i,    kg_det_urb_cement_o,    'urban','detached', 'cement')
+kg_det_urb_concrete_out  = preprocess(kg_det_urb_concrete,  kg_det_urb_concrete_i,  kg_det_urb_concrete_o,  'urban','detached', 'concrete') 
+kg_det_urb_wood_out      = preprocess(kg_det_urb_wood,      kg_det_urb_wood_i,      kg_det_urb_wood_o,      'urban','detached', 'wood')  
+kg_det_urb_copper_out    = preprocess(kg_det_urb_copper,    kg_det_urb_copper_i,    kg_det_urb_copper_o,    'urban','detached', 'copper') 
+kg_det_urb_aluminium_out = preprocess(kg_det_urb_aluminium, kg_det_urb_aluminium_i, kg_det_urb_aluminium_o, 'urban','detached', 'aluminium') 
+kg_det_urb_glass_out     = preprocess(kg_det_urb_glass,     kg_det_urb_glass_i,     kg_det_urb_glass_o,     'urban','detached', 'glass')
+kg_det_urb_brick_out     = preprocess(kg_det_urb_brick,     kg_det_urb_brick_i,     kg_det_urb_brick_o,     'urban','detached', 'brick')
 
-kg_det_urb_wood_out      = [[]] * length  
-kg_det_urb_wood_out[0]   = kg_det_urb_wood.transpose() 
-kg_det_urb_wood_out[1]   = kg_det_urb_wood_i.transpose() 
-kg_det_urb_wood_out[2]   = kg_det_urb_wood_o.transpose() 
-for item in range(0,length):
-        kg_det_urb_wood_out[item].insert(0,'material', ['wood'] * 26)
-        kg_det_urb_wood_out[item].insert(0,'area', ['urban'] * 26)
-        kg_det_urb_wood_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_urb_wood_out[item].insert(0,'flow', [tag[item]] * 26)
-   
-kg_det_urb_copper_out      = [[]] * length  
-kg_det_urb_copper_out[0]   = kg_det_urb_copper.transpose() 
-kg_det_urb_copper_out[1]   = kg_det_urb_copper_i.transpose() 
-kg_det_urb_copper_out[2]   = kg_det_urb_copper_o.transpose() 
-for item in range(0,length):
-        kg_det_urb_copper_out[item].insert(0,'material', ['copper'] * 26)
-        kg_det_urb_copper_out[item].insert(0,'area', ['urban'] * 26)
-        kg_det_urb_copper_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_urb_copper_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_det_urb_aluminium_out      = [[]] * length  
-kg_det_urb_aluminium_out[0]   = kg_det_urb_aluminium.transpose() 
-kg_det_urb_aluminium_out[1]   = kg_det_urb_aluminium_i.transpose() 
-kg_det_urb_aluminium_out[2]   = kg_det_urb_aluminium_o.transpose() 
-for item in range(0,length):
-        kg_det_urb_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-        kg_det_urb_aluminium_out[item].insert(0,'area', ['urban'] * 26)
-        kg_det_urb_aluminium_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_urb_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_sem_urb_steel_out     = preprocess(kg_sem_urb_steel,     kg_sem_urb_steel_i,     kg_sem_urb_steel_o,     'urban','semi-detached', 'steel')
+kg_sem_urb_cement_out    = preprocess(kg_sem_urb_cement,    kg_sem_urb_cement_i,    kg_sem_urb_cement_o,    'urban','semi-detached', 'cement')
+kg_sem_urb_concrete_out  = preprocess(kg_sem_urb_concrete,  kg_sem_urb_concrete_i,  kg_sem_urb_concrete_o,  'urban','semi-detached', 'concrete') 
+kg_sem_urb_wood_out      = preprocess(kg_sem_urb_wood,      kg_sem_urb_wood_i,      kg_sem_urb_wood_o,      'urban','semi-detached', 'wood')  
+kg_sem_urb_copper_out    = preprocess(kg_sem_urb_copper,    kg_sem_urb_copper_i,    kg_sem_urb_copper_o,    'urban','semi-detached', 'copper') 
+kg_sem_urb_aluminium_out = preprocess(kg_sem_urb_aluminium, kg_sem_urb_aluminium_i, kg_sem_urb_aluminium_o, 'urban','semi-detached', 'aluminium') 
+kg_sem_urb_glass_out     = preprocess(kg_sem_urb_glass,     kg_sem_urb_glass_i,     kg_sem_urb_glass_o,     'urban','semi-detached', 'glass')
+kg_sem_urb_brick_out     = preprocess(kg_sem_urb_brick,     kg_sem_urb_brick_i,     kg_sem_urb_brick_o,     'urban','semi-detached', 'brick')
 
-kg_det_urb_glass_out      = [[]] * length  
-kg_det_urb_glass_out[0]   = kg_det_urb_glass.transpose() 
-kg_det_urb_glass_out[1]   = kg_det_urb_glass_i.transpose() 
-kg_det_urb_glass_out[2]   = kg_det_urb_glass_o.transpose() 
-for item in range(0,length):
-        kg_det_urb_glass_out[item].insert(0,'material', ['glass'] * 26)
-        kg_det_urb_glass_out[item].insert(0,'area', ['urban'] * 26)
-        kg_det_urb_glass_out[item].insert(0,'type', ['detached'] * 26)
-        kg_det_urb_glass_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_app_urb_steel_out     = preprocess(kg_app_urb_steel,     kg_app_urb_steel_i,     kg_app_urb_steel_o,     'urban','appartments', 'steel')
+kg_app_urb_cement_out    = preprocess(kg_app_urb_cement,    kg_app_urb_cement_i,    kg_app_urb_cement_o,    'urban','appartments', 'cement')
+kg_app_urb_concrete_out  = preprocess(kg_app_urb_concrete,  kg_app_urb_concrete_i,  kg_app_urb_concrete_o,  'urban','appartments', 'concrete') 
+kg_app_urb_wood_out      = preprocess(kg_app_urb_wood,      kg_app_urb_wood_i,      kg_app_urb_wood_o,      'urban','appartments', 'wood')  
+kg_app_urb_copper_out    = preprocess(kg_app_urb_copper,    kg_app_urb_copper_i,    kg_app_urb_copper_o,    'urban','appartments', 'copper') 
+kg_app_urb_aluminium_out = preprocess(kg_app_urb_aluminium, kg_app_urb_aluminium_i, kg_app_urb_aluminium_o, 'urban','appartments', 'aluminium') 
+kg_app_urb_glass_out     = preprocess(kg_app_urb_glass,     kg_app_urb_glass_i,     kg_app_urb_glass_o,     'urban','appartments', 'glass')
+kg_app_urb_brick_out     = preprocess(kg_app_urb_brick,     kg_app_urb_brick_i,     kg_app_urb_brick_o,     'urban','appartments', 'brick')
 
-kg_sem_urb_steel_out      = [[]] * length  
-kg_sem_urb_steel_out[0]   = kg_sem_urb_steel.transpose() 
-kg_sem_urb_steel_out[1]   = kg_sem_urb_steel_i.transpose() 
-kg_sem_urb_steel_out[2]   = kg_sem_urb_steel_o.transpose() 
-for item in range(0,length):
-        kg_sem_urb_steel_out[item].insert(0,'material', ['steel'] * 26)
-        kg_sem_urb_steel_out[item].insert(0,'area', ['urban'] * 26)
-        kg_sem_urb_steel_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_urb_steel_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_urb_cement_out      = [[]] * length  
-kg_sem_urb_cement_out[0]   = kg_sem_urb_cement.transpose() 
-kg_sem_urb_cement_out[1]   = kg_sem_urb_cement_i.transpose() 
-kg_sem_urb_cement_out[2]   = kg_sem_urb_cement_o.transpose() 
-for item in range(0,length):
-        kg_sem_urb_cement_out[item].insert(0,'material', ['cement'] * 26)
-        kg_sem_urb_cement_out[item].insert(0,'area', ['urban'] * 26)
-        kg_sem_urb_cement_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_urb_cement_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_urb_concrete_out      = [[]] * length  
-kg_sem_urb_concrete_out[0]   = kg_sem_urb_concrete.transpose() 
-kg_sem_urb_concrete_out[1]   = kg_sem_urb_concrete_i.transpose() 
-kg_sem_urb_concrete_out[2]   = kg_sem_urb_concrete_o.transpose() 
-for item in range(0,length):
-        kg_sem_urb_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-        kg_sem_urb_concrete_out[item].insert(0,'area', ['urban'] * 26)
-        kg_sem_urb_concrete_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_urb_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_urb_wood_out      = [[]] * length  
-kg_sem_urb_wood_out[0]   = kg_sem_urb_wood.transpose() 
-kg_sem_urb_wood_out[1]   = kg_sem_urb_wood_i.transpose() 
-kg_sem_urb_wood_out[2]   = kg_sem_urb_wood_o.transpose() 
-for item in range(0,length):
-        kg_sem_urb_wood_out[item].insert(0,'material', ['wood'] * 26)
-        kg_sem_urb_wood_out[item].insert(0,'area', ['urban'] * 26)
-        kg_sem_urb_wood_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_urb_wood_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_urb_copper_out      = [[]] * length  
-kg_sem_urb_copper_out[0]   = kg_sem_urb_copper.transpose() 
-kg_sem_urb_copper_out[1]   = kg_sem_urb_copper_i.transpose() 
-kg_sem_urb_copper_out[2]   = kg_sem_urb_copper_o.transpose() 
-for item in range(0,length):
-        kg_sem_urb_copper_out[item].insert(0,'material', ['copper'] * 26)
-        kg_sem_urb_copper_out[item].insert(0,'area', ['urban'] * 26)
-        kg_sem_urb_copper_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_urb_copper_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_urb_aluminium_out      = [[]] * length  
-kg_sem_urb_aluminium_out[0]   = kg_sem_urb_aluminium.transpose() 
-kg_sem_urb_aluminium_out[1]   = kg_sem_urb_aluminium_i.transpose() 
-kg_sem_urb_aluminium_out[2]   = kg_sem_urb_aluminium_o.transpose() 
-for item in range(0,length):
-        kg_sem_urb_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-        kg_sem_urb_aluminium_out[item].insert(0,'area', ['urban'] * 26)
-        kg_sem_urb_aluminium_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_urb_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_sem_urb_glass_out      = [[]] * length  
-kg_sem_urb_glass_out[0]   = kg_sem_urb_glass.transpose() 
-kg_sem_urb_glass_out[1]   = kg_sem_urb_glass_i.transpose() 
-kg_sem_urb_glass_out[2]   = kg_sem_urb_glass_o.transpose() 
-for item in range(0,length):
-        kg_sem_urb_glass_out[item].insert(0,'material', ['glass'] * 26)
-        kg_sem_urb_glass_out[item].insert(0,'area', ['urban'] * 26)
-        kg_sem_urb_glass_out[item].insert(0,'type', ['semi-detached'] * 26)
-        kg_sem_urb_glass_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-#
-kg_app_urb_steel_out      = [[]] * length  
-kg_app_urb_steel_out[0]   = kg_app_urb_steel.transpose() 
-kg_app_urb_steel_out[1]   = kg_app_urb_steel_i.transpose() 
-kg_app_urb_steel_out[2]   = kg_app_urb_steel_o.transpose() 
-for item in range(0,length):
-        kg_app_urb_steel_out[item].insert(0,'material', ['steel'] * 26)
-        kg_app_urb_steel_out[item].insert(0,'area', ['urban'] * 26)
-        kg_app_urb_steel_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_urb_steel_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_urb_cement_out      = [[]] * length  
-kg_app_urb_cement_out[0]   = kg_app_urb_cement.transpose() 
-kg_app_urb_cement_out[1]   = kg_app_urb_cement_i.transpose() 
-kg_app_urb_cement_out[2]   = kg_app_urb_cement_o.transpose() 
-for item in range(0,length):
-        kg_app_urb_cement_out[item].insert(0,'material', ['cement'] * 26)
-        kg_app_urb_cement_out[item].insert(0,'area', ['urban'] * 26)
-        kg_app_urb_cement_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_urb_cement_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_urb_concrete_out      = [[]] * length  
-kg_app_urb_concrete_out[0]   = kg_app_urb_concrete.transpose() 
-kg_app_urb_concrete_out[1]   = kg_app_urb_concrete_i.transpose() 
-kg_app_urb_concrete_out[2]   = kg_app_urb_concrete_o.transpose() 
-for item in range(0,length):
-        kg_app_urb_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-        kg_app_urb_concrete_out[item].insert(0,'area', ['urban'] * 26)
-        kg_app_urb_concrete_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_urb_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_urb_wood_out      = [[]] * length  
-kg_app_urb_wood_out[0]   = kg_app_urb_wood.transpose() 
-kg_app_urb_wood_out[1]   = kg_app_urb_wood_i.transpose() 
-kg_app_urb_wood_out[2]   = kg_app_urb_wood_o.transpose() 
-for item in range(0,length):
-        kg_app_urb_wood_out[item].insert(0,'material', ['wood'] * 26)
-        kg_app_urb_wood_out[item].insert(0,'area', ['urban'] * 26)
-        kg_app_urb_wood_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_urb_wood_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_urb_copper_out      = [[]] * length  
-kg_app_urb_copper_out[0]   = kg_app_urb_copper.transpose() 
-kg_app_urb_copper_out[1]   = kg_app_urb_copper_i.transpose() 
-kg_app_urb_copper_out[2]   = kg_app_urb_copper_o.transpose() 
-for item in range(0,length):
-        kg_app_urb_copper_out[item].insert(0,'material', ['copper'] * 26)
-        kg_app_urb_copper_out[item].insert(0,'area', ['urban'] * 26)
-        kg_app_urb_copper_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_urb_copper_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_urb_aluminium_out      = [[]] * length  
-kg_app_urb_aluminium_out[0]   = kg_app_urb_aluminium.transpose() 
-kg_app_urb_aluminium_out[1]   = kg_app_urb_aluminium_i.transpose() 
-kg_app_urb_aluminium_out[2]   = kg_app_urb_aluminium_o.transpose() 
-for item in range(0,length):
-        kg_app_urb_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-        kg_app_urb_aluminium_out[item].insert(0,'area', ['urban'] * 26)
-        kg_app_urb_aluminium_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_urb_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_app_urb_glass_out      = [[]] * length  
-kg_app_urb_glass_out[0]   = kg_app_urb_glass.transpose() 
-kg_app_urb_glass_out[1]   = kg_app_urb_glass_i.transpose() 
-kg_app_urb_glass_out[2]   = kg_app_urb_glass_o.transpose() 
-for item in range(0,length):
-        kg_app_urb_glass_out[item].insert(0,'material', ['glass'] * 26)
-        kg_app_urb_glass_out[item].insert(0,'area', ['urban'] * 26)
-        kg_app_urb_glass_out[item].insert(0,'type', ['appartments'] * 26)
-        kg_app_urb_glass_out[item].insert(0,'flow', [tag[item]] * 26)
-        
-kg_hig_urb_steel_out      = [[]] * length  
-kg_hig_urb_steel_out[0]   = kg_hig_urb_steel.transpose() 
-kg_hig_urb_steel_out[1]   = kg_hig_urb_steel_i.transpose() 
-kg_hig_urb_steel_out[2]   = kg_hig_urb_steel_o.transpose() 
-for item in range(0,length):
-        kg_hig_urb_steel_out[item].insert(0,'material', ['steel'] * 26)
-        kg_hig_urb_steel_out[item].insert(0,'area', ['urban'] * 26)
-        kg_hig_urb_steel_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_urb_steel_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_urb_cement_out      = [[]] * length  
-kg_hig_urb_cement_out[0]   = kg_hig_urb_cement.transpose() 
-kg_hig_urb_cement_out[1]   = kg_hig_urb_cement_i.transpose() 
-kg_hig_urb_cement_out[2]   = kg_hig_urb_cement_o.transpose() 
-for item in range(0,length):
-        kg_hig_urb_cement_out[item].insert(0,'material', ['cement'] * 26)
-        kg_hig_urb_cement_out[item].insert(0,'area', ['urban'] * 26)
-        kg_hig_urb_cement_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_urb_cement_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_urb_concrete_out      = [[]] * length  
-kg_hig_urb_concrete_out[0]   = kg_hig_urb_concrete.transpose() 
-kg_hig_urb_concrete_out[1]   = kg_hig_urb_concrete_i.transpose() 
-kg_hig_urb_concrete_out[2]   = kg_hig_urb_concrete_o.transpose() 
-for item in range(0,length):
-        kg_hig_urb_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-        kg_hig_urb_concrete_out[item].insert(0,'area', ['urban'] * 26)
-        kg_hig_urb_concrete_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_urb_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_urb_wood_out      = [[]] * length  
-kg_hig_urb_wood_out[0]   = kg_hig_urb_wood.transpose() 
-kg_hig_urb_wood_out[1]   = kg_hig_urb_wood_i.transpose() 
-kg_hig_urb_wood_out[2]   = kg_hig_urb_wood_o.transpose() 
-for item in range(0,length):
-        kg_hig_urb_wood_out[item].insert(0,'material', ['wood'] * 26)
-        kg_hig_urb_wood_out[item].insert(0,'area', ['urban'] * 26)
-        kg_hig_urb_wood_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_urb_wood_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_urb_copper_out      = [[]] * length  
-kg_hig_urb_copper_out[0]   = kg_hig_urb_copper.transpose() 
-kg_hig_urb_copper_out[1]   = kg_hig_urb_copper_i.transpose() 
-kg_hig_urb_copper_out[2]   = kg_hig_urb_copper_o.transpose() 
-for item in range(0,length):
-        kg_hig_urb_copper_out[item].insert(0,'material', ['copper'] * 26)
-        kg_hig_urb_copper_out[item].insert(0,'area', ['urban'] * 26)
-        kg_hig_urb_copper_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_urb_copper_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_urb_aluminium_out      = [[]] * length  
-kg_hig_urb_aluminium_out[0]   = kg_hig_urb_aluminium.transpose() 
-kg_hig_urb_aluminium_out[1]   = kg_hig_urb_aluminium_i.transpose() 
-kg_hig_urb_aluminium_out[2]   = kg_hig_urb_aluminium_o.transpose() 
-for item in range(0,length):
-        kg_hig_urb_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-        kg_hig_urb_aluminium_out[item].insert(0,'area', ['urban'] * 26)
-        kg_hig_urb_aluminium_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_urb_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
- 
-kg_hig_urb_glass_out      = [[]] * length  
-kg_hig_urb_glass_out[0]   = kg_hig_urb_glass.transpose() 
-kg_hig_urb_glass_out[1]   = kg_hig_urb_glass_i.transpose() 
-kg_hig_urb_glass_out[2]   = kg_hig_urb_glass_o.transpose() 
-for item in range(0,length):
-        kg_hig_urb_glass_out[item].insert(0,'material', ['glass'] * 26)
-        kg_hig_urb_glass_out[item].insert(0,'area', ['urban'] * 26)
-        kg_hig_urb_glass_out[item].insert(0,'type', ['high-rise'] * 26)
-        kg_hig_urb_glass_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_hig_urb_steel_out     = preprocess(kg_hig_urb_steel,     kg_hig_urb_steel_i,     kg_hig_urb_steel_o,     'urban','high-rise', 'steel')
+kg_hig_urb_cement_out    = preprocess(kg_hig_urb_cement,    kg_hig_urb_cement_i,    kg_hig_urb_cement_o,    'urban','high-rise', 'cement')
+kg_hig_urb_concrete_out  = preprocess(kg_hig_urb_concrete,  kg_hig_urb_concrete_i,  kg_hig_urb_concrete_o,  'urban','high-rise', 'concrete') 
+kg_hig_urb_wood_out      = preprocess(kg_hig_urb_wood,      kg_hig_urb_wood_i,      kg_hig_urb_wood_o,      'urban','high-rise', 'wood')  
+kg_hig_urb_copper_out    = preprocess(kg_hig_urb_copper,    kg_hig_urb_copper_i,    kg_hig_urb_copper_o,    'urban','high-rise', 'copper') 
+kg_hig_urb_aluminium_out = preprocess(kg_hig_urb_aluminium, kg_hig_urb_aluminium_i, kg_hig_urb_aluminium_o, 'urban','high-rise', 'aluminium') 
+kg_hig_urb_glass_out     = preprocess(kg_hig_urb_glass,     kg_hig_urb_glass_i,     kg_hig_urb_glass_o,     'urban','high-rise', 'glass')
+kg_hig_urb_brick_out     = preprocess(kg_hig_urb_brick,     kg_hig_urb_brick_i,     kg_hig_urb_brick_o,     'urban','high-rise', 'brick')
 
 # COMMERCIAL ------------------------------------------------------------------
 
 # offices
-kg_office_steel_out  = [[]] * length
-kg_office_steel_out[0]  = kg_office_steel.transpose()
-kg_office_steel_out[1]  = kg_office_steel_i.transpose()
-kg_office_steel_out[2]  = kg_office_steel_o.transpose()
-for item in range(0,length):
-    kg_office_steel_out[item].insert(0,'material', ['steel'] * 26)
-    kg_office_steel_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_office_steel_out[item].insert(0,'type', ['office'] * 26)
-    kg_office_steel_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_office_cement_out  = [[]] * length
-kg_office_cement_out[0]  = kg_office_cement.transpose()
-kg_office_cement_out[1]  = kg_office_cement_i.transpose()
-kg_office_cement_out[2]  = kg_office_cement_o.transpose()
-for item in range(0,length):
-    kg_office_cement_out[item].insert(0,'material', ['cement'] * 26)
-    kg_office_cement_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_office_cement_out[item].insert(0,'type', ['office'] * 26)
-    kg_office_cement_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_office_concrete_out  = [[]] * length
-kg_office_concrete_out[0]  = kg_office_concrete.transpose()
-kg_office_concrete_out[1]  = kg_office_concrete_i.transpose()
-kg_office_concrete_out[2]  = kg_office_concrete_o.transpose()
-for item in range(0,length):
-    kg_office_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-    kg_office_concrete_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_office_concrete_out[item].insert(0,'type', ['office'] * 26)
-    kg_office_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_office_wood_out  = [[]] * length
-kg_office_wood_out[0]  = kg_office_wood.transpose()
-kg_office_wood_out[1]  = kg_office_wood_i.transpose()
-kg_office_wood_out[2]  = kg_office_wood_o.transpose()
-for item in range(0,length):
-    kg_office_wood_out[item].insert(0,'material', ['wood'] * 26)
-    kg_office_wood_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_office_wood_out[item].insert(0,'type', ['office'] * 26)
-    kg_office_wood_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_office_copper_out  = [[]] * length
-kg_office_copper_out[0]  = kg_office_copper.transpose()
-kg_office_copper_out[1]  = kg_office_copper_i.transpose()
-kg_office_copper_out[2]  = kg_office_copper_o.transpose()
-for item in range(0,length):
-    kg_office_copper_out[item].insert(0,'material', ['copper'] * 26)
-    kg_office_copper_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_office_copper_out[item].insert(0,'type', ['office'] * 26)
-    kg_office_copper_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_office_aluminium_out  = [[]] * length
-kg_office_aluminium_out[0]  = kg_office_aluminium.transpose()
-kg_office_aluminium_out[1]  = kg_office_aluminium_i.transpose()
-kg_office_aluminium_out[2]  = kg_office_aluminium_o.transpose()
-for item in range(0,length):
-    kg_office_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-    kg_office_aluminium_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_office_aluminium_out[item].insert(0,'type', ['office'] * 26)
-    kg_office_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_office_glass_out  = [[]] * length
-kg_office_glass_out[0]  = kg_office_glass.transpose()
-kg_office_glass_out[1]  = kg_office_glass_i.transpose()
-kg_office_glass_out[2]  = kg_office_glass_o.transpose()
-for item in range(0,length):
-    kg_office_glass_out[item].insert(0,'material', ['glass'] * 26)
-    kg_office_glass_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_office_glass_out[item].insert(0,'type', ['office'] * 26)
-    kg_office_glass_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_office_steel_out     = preprocess(kg_office_steel,     kg_office_steel_i,     kg_office_steel_o,     'commercial','office', 'steel')
+kg_office_cement_out    = preprocess(kg_office_cement,    kg_office_cement_i,    kg_office_cement_o,    'commercial','office', 'cement')
+kg_office_concrete_out  = preprocess(kg_office_concrete,  kg_office_concrete_i,  kg_office_concrete_o,  'commercial','office', 'concrete')
+kg_office_wood_out      = preprocess(kg_office_wood,      kg_office_wood_i,      kg_office_wood_o,      'commercial','office', 'wood')
+kg_office_copper_out    = preprocess(kg_office_copper,    kg_office_copper_i,    kg_office_copper_o,    'commercial','office', 'copper')
+kg_office_aluminium_out = preprocess(kg_office_aluminium, kg_office_aluminium_i, kg_office_aluminium_o, 'commercial','office', 'aluminium')
+kg_office_glass_out     = preprocess(kg_office_glass,     kg_office_glass_i,     kg_office_glass_o,     'commercial','office', 'glass')
+kg_office_brick_out     = preprocess(kg_office_brick,     kg_office_brick_i,     kg_office_brick_o,     'commercial','office', 'brick')
 
 # shops & retail
-kg_retail_steel_out  = [[]] * length
-kg_retail_steel_out[0]  = kg_retail_steel.transpose()
-kg_retail_steel_out[1]  = kg_retail_steel_i.transpose()
-kg_retail_steel_out[2]  = kg_retail_steel_o.transpose()
-for item in range(0,length):
-    kg_retail_steel_out[item].insert(0,'material', ['steel'] * 26)
-    kg_retail_steel_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_retail_steel_out[item].insert(0,'type', ['retail'] * 26)
-    kg_retail_steel_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_retail_cement_out  = [[]] * length
-kg_retail_cement_out[0]  = kg_retail_cement.transpose()
-kg_retail_cement_out[1]  = kg_retail_cement_i.transpose()
-kg_retail_cement_out[2]  = kg_retail_cement_o.transpose()
-for item in range(0,length):
-    kg_retail_cement_out[item].insert(0,'material', ['cement'] * 26)
-    kg_retail_cement_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_retail_cement_out[item].insert(0,'type', ['retail'] * 26)
-    kg_retail_cement_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_retail_concrete_out  = [[]] * length
-kg_retail_concrete_out[0]  = kg_retail_concrete.transpose()
-kg_retail_concrete_out[1]  = kg_retail_concrete_i.transpose()
-kg_retail_concrete_out[2]  = kg_retail_concrete_o.transpose()
-for item in range(0,length):
-    kg_retail_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-    kg_retail_concrete_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_retail_concrete_out[item].insert(0,'type', ['retail'] * 26)
-    kg_retail_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_retail_wood_out  = [[]] * length
-kg_retail_wood_out[0]  = kg_retail_wood.transpose()
-kg_retail_wood_out[1]  = kg_retail_wood_i.transpose()
-kg_retail_wood_out[2]  = kg_retail_wood_o.transpose()
-for item in range(0,length):
-    kg_retail_wood_out[item].insert(0,'material', ['wood'] * 26)
-    kg_retail_wood_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_retail_wood_out[item].insert(0,'type', ['retail'] * 26)
-    kg_retail_wood_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_retail_copper_out  = [[]] * length
-kg_retail_copper_out[0]  = kg_retail_copper.transpose()
-kg_retail_copper_out[1]  = kg_retail_copper_i.transpose()
-kg_retail_copper_out[2]  = kg_retail_copper_o.transpose()
-for item in range(0,length):
-    kg_retail_copper_out[item].insert(0,'material', ['copper'] * 26)
-    kg_retail_copper_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_retail_copper_out[item].insert(0,'type', ['retail'] * 26)
-    kg_retail_copper_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_retail_aluminium_out  = [[]] * length
-kg_retail_aluminium_out[0]  = kg_retail_aluminium.transpose()
-kg_retail_aluminium_out[1]  = kg_retail_aluminium_i.transpose()
-kg_retail_aluminium_out[2]  = kg_retail_aluminium_o.transpose()
-for item in range(0,length):
-    kg_retail_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-    kg_retail_aluminium_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_retail_aluminium_out[item].insert(0,'type', ['retail'] * 26)
-    kg_retail_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_retail_glass_out  = [[]] * length
-kg_retail_glass_out[0]  = kg_retail_glass.transpose()
-kg_retail_glass_out[1]  = kg_retail_glass_i.transpose()
-kg_retail_glass_out[2]  = kg_retail_glass_o.transpose()
-for item in range(0,length):
-    kg_retail_glass_out[item].insert(0,'material', ['glass'] * 26)
-    kg_retail_glass_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_retail_glass_out[item].insert(0,'type', ['retail'] * 26)
-    kg_retail_glass_out[item].insert(0,'flow', [tag[item]] * 26)
+kg_retail_steel_out     = preprocess(kg_retail_steel,     kg_retail_steel_i,     kg_retail_steel_o,     'commercial','retail', 'steel')
+kg_retail_cement_out    = preprocess(kg_retail_cement,    kg_retail_cement_i,    kg_retail_cement_o,    'commercial','retail', 'cement')
+kg_retail_concrete_out  = preprocess(kg_retail_concrete,  kg_retail_concrete_i,  kg_retail_concrete_o,  'commercial','retail', 'concrete')
+kg_retail_wood_out      = preprocess(kg_retail_wood,      kg_retail_wood_i,      kg_retail_wood_o,      'commercial','retail', 'wood')
+kg_retail_copper_out    = preprocess(kg_retail_copper,    kg_retail_copper_i,    kg_retail_copper_o,    'commercial','retail', 'copper')
+kg_retail_aluminium_out = preprocess(kg_retail_aluminium, kg_retail_aluminium_i, kg_retail_aluminium_o, 'commercial','retail', 'aluminium')
+kg_retail_glass_out     = preprocess(kg_retail_glass,     kg_retail_glass_i,     kg_retail_glass_o,     'commercial','retail', 'glass')
+kg_retail_brick_out     = preprocess(kg_retail_brick,     kg_retail_brick_i,     kg_retail_brick_o,     'commercial','retail', 'brick')
 
 # hotels & restaurants
+kg_hotels_steel_out     = preprocess(kg_hotels_steel,     kg_hotels_steel_i,     kg_hotels_steel_o,     'commercial','hotels', 'steel')
+kg_hotels_cement_out    = preprocess(kg_hotels_cement,    kg_hotels_cement_i,    kg_hotels_cement_o,    'commercial','hotels', 'cement')
+kg_hotels_concrete_out  = preprocess(kg_hotels_concrete,  kg_hotels_concrete_i,  kg_hotels_concrete_o,  'commercial','hotels', 'concrete')
+kg_hotels_wood_out      = preprocess(kg_hotels_wood,      kg_hotels_wood_i,      kg_hotels_wood_o,      'commercial','hotels', 'wood')
+kg_hotels_copper_out    = preprocess(kg_hotels_copper,    kg_hotels_copper_i,    kg_hotels_copper_o,    'commercial','hotels', 'copper')
+kg_hotels_aluminium_out = preprocess(kg_hotels_aluminium, kg_hotels_aluminium_i, kg_hotels_aluminium_o, 'commercial','hotels', 'aluminium')
+kg_hotels_glass_out     = preprocess(kg_hotels_glass,     kg_hotels_glass_i,     kg_hotels_glass_o,     'commercial','hotels', 'glass')
+kg_hotels_brick_out     = preprocess(kg_hotels_brick,     kg_hotels_brick_i,     kg_hotels_brick_o,     'commercial','hotels', 'brick')
 
-kg_hotels_steel_out  = [[]] * length
-kg_hotels_steel_out[0]  = kg_hotels_steel.transpose()
-kg_hotels_steel_out[1]  = kg_hotels_steel_i.transpose()
-kg_hotels_steel_out[2]  = kg_hotels_steel_o.transpose()
-for item in range(0,length):
-    kg_hotels_steel_out[item].insert(0,'material', ['steel'] * 26)
-    kg_hotels_steel_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_hotels_steel_out[item].insert(0,'type', ['hotels'] * 26)
-    kg_hotels_steel_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_hotels_cement_out  = [[]] * length
-kg_hotels_cement_out[0]  = kg_hotels_cement.transpose()
-kg_hotels_cement_out[1]  = kg_hotels_cement_i.transpose()
-kg_hotels_cement_out[2]  = kg_hotels_cement_o.transpose()
-for item in range(0,length):
-    kg_hotels_cement_out[item].insert(0,'material', ['cement'] * 26)
-    kg_hotels_cement_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_hotels_cement_out[item].insert(0,'type', ['hotels'] * 26)
-    kg_hotels_cement_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_hotels_concrete_out  = [[]] * length
-kg_hotels_concrete_out[0]  = kg_hotels_concrete.transpose()
-kg_hotels_concrete_out[1]  = kg_hotels_concrete_i.transpose()
-kg_hotels_concrete_out[2]  = kg_hotels_concrete_o.transpose()
-for item in range(0,length):
-    kg_hotels_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-    kg_hotels_concrete_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_hotels_concrete_out[item].insert(0,'type', ['hotels'] * 26)
-    kg_hotels_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_hotels_wood_out  = [[]] * length
-kg_hotels_wood_out[0]  = kg_hotels_wood.transpose()
-kg_hotels_wood_out[1]  = kg_hotels_wood_i.transpose()
-kg_hotels_wood_out[2]  = kg_hotels_wood_o.transpose()
-for item in range(0,length):
-    kg_hotels_wood_out[item].insert(0,'material', ['wood'] * 26)
-    kg_hotels_wood_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_hotels_wood_out[item].insert(0,'type', ['hotels'] * 26)
-    kg_hotels_wood_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_hotels_copper_out  = [[]] * length
-kg_hotels_copper_out[0]  = kg_hotels_copper.transpose()
-kg_hotels_copper_out[1]  = kg_hotels_copper_i.transpose()
-kg_hotels_copper_out[2]  = kg_hotels_copper_o.transpose()
-for item in range(0,length):
-    kg_hotels_copper_out[item].insert(0,'material', ['copper'] * 26)
-    kg_hotels_copper_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_hotels_copper_out[item].insert(0,'type', ['hotels'] * 26)
-    kg_hotels_copper_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_hotels_aluminium_out  = [[]] * length
-kg_hotels_aluminium_out[0]  = kg_hotels_aluminium.transpose()
-kg_hotels_aluminium_out[1]  = kg_hotels_aluminium_i.transpose()
-kg_hotels_aluminium_out[2]  = kg_hotels_aluminium_o.transpose()
-for item in range(0,length):
-    kg_hotels_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-    kg_hotels_aluminium_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_hotels_aluminium_out[item].insert(0,'type', ['hotels'] * 26)
-    kg_hotels_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_hotels_glass_out  = [[]] * length
-kg_hotels_glass_out[0]  = kg_hotels_glass.transpose()
-kg_hotels_glass_out[1]  = kg_hotels_glass_i.transpose()
-kg_hotels_glass_out[2]  = kg_hotels_glass_o.transpose()
-for item in range(0,length):
-    kg_hotels_glass_out[item].insert(0,'material', ['glass'] * 26)
-    kg_hotels_glass_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_hotels_glass_out[item].insert(0,'type', ['hotels'] * 26)
-    kg_hotels_glass_out[item].insert(0,'flow', [tag[item]] * 26)
-
-# government (schools, government, public transport, hospitals)
-kg_govern_steel_out  = [[]] * length
-kg_govern_steel_out[0]  = kg_govern_steel.transpose()
-kg_govern_steel_out[1]  = kg_govern_steel_i.transpose()
-kg_govern_steel_out[2]  = kg_govern_steel_o.transpose()
-for item in range(0,length):
-    kg_govern_steel_out[item].insert(0,'material', ['steel'] * 26)
-    kg_govern_steel_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_govern_steel_out[item].insert(0,'type', ['govern'] * 26)
-    kg_govern_steel_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_govern_cement_out  = [[]] * length
-kg_govern_cement_out[0]  = kg_govern_cement.transpose()
-kg_govern_cement_out[1]  = kg_govern_cement_i.transpose()
-kg_govern_cement_out[2]  = kg_govern_cement_o.transpose()
-for item in range(0,length):
-    kg_govern_cement_out[item].insert(0,'material', ['cement'] * 26)
-    kg_govern_cement_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_govern_cement_out[item].insert(0,'type', ['govern'] * 26)
-    kg_govern_cement_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_govern_concrete_out  = [[]] * length
-kg_govern_concrete_out[0]  = kg_govern_concrete.transpose()
-kg_govern_concrete_out[1]  = kg_govern_concrete_i.transpose()
-kg_govern_concrete_out[2]  = kg_govern_concrete_o.transpose()
-for item in range(0,length):
-    kg_govern_concrete_out[item].insert(0,'material', ['concrete'] * 26)
-    kg_govern_concrete_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_govern_concrete_out[item].insert(0,'type', ['govern'] * 26)
-    kg_govern_concrete_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_govern_wood_out  = [[]] * length
-kg_govern_wood_out[0]  = kg_govern_wood.transpose()
-kg_govern_wood_out[1]  = kg_govern_wood_i.transpose()
-kg_govern_wood_out[2]  = kg_govern_wood_o.transpose()
-for item in range(0,length):
-    kg_govern_wood_out[item].insert(0,'material', ['wood'] * 26)
-    kg_govern_wood_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_govern_wood_out[item].insert(0,'type', ['govern'] * 26)
-    kg_govern_wood_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_govern_copper_out  = [[]] * length
-kg_govern_copper_out[0]  = kg_govern_copper.transpose()
-kg_govern_copper_out[1]  = kg_govern_copper_i.transpose()
-kg_govern_copper_out[2]  = kg_govern_copper_o.transpose()
-for item in range(0,length):
-    kg_govern_copper_out[item].insert(0,'material', ['copper'] * 26)
-    kg_govern_copper_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_govern_copper_out[item].insert(0,'type', ['govern'] * 26)
-    kg_govern_copper_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_govern_aluminium_out  = [[]] * length
-kg_govern_aluminium_out[0]  = kg_govern_aluminium.transpose()
-kg_govern_aluminium_out[1]  = kg_govern_aluminium_i.transpose()
-kg_govern_aluminium_out[2]  = kg_govern_aluminium_o.transpose()
-for item in range(0,length):
-    kg_govern_aluminium_out[item].insert(0,'material', ['aluminium'] * 26)
-    kg_govern_aluminium_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_govern_aluminium_out[item].insert(0,'type', ['govern'] * 26)
-    kg_govern_aluminium_out[item].insert(0,'flow', [tag[item]] * 26)
-
-kg_govern_glass_out  = [[]] * length
-kg_govern_glass_out[0]  = kg_govern_glass.transpose()
-kg_govern_glass_out[1]  = kg_govern_glass_i.transpose()
-kg_govern_glass_out[2]  = kg_govern_glass_o.transpose()
-for item in range(0,length):
-    kg_govern_glass_out[item].insert(0,'material', ['glass'] * 26)
-    kg_govern_glass_out[item].insert(0,'area', ['commercial'] * 26)
-    kg_govern_glass_out[item].insert(0,'type', ['govern'] * 26)
-    kg_govern_glass_out[item].insert(0,'flow', [tag[item]] * 26) 
+# government (schools, government, public transport, hospitals, other)
+kg_govern_steel_out     = preprocess(kg_govern_steel,     kg_govern_steel_i,     kg_govern_steel_o,     'commercial','govern', 'steel')
+kg_govern_cement_out    = preprocess(kg_govern_cement,    kg_govern_cement_i,    kg_govern_cement_o,    'commercial','govern', 'cement')
+kg_govern_concrete_out  = preprocess(kg_govern_concrete,  kg_govern_concrete_i,  kg_govern_concrete_o,  'commercial','govern', 'concrete')
+kg_govern_wood_out      = preprocess(kg_govern_wood,      kg_govern_wood_i,      kg_govern_wood_o,      'commercial','govern', 'wood')
+kg_govern_copper_out    = preprocess(kg_govern_copper,    kg_govern_copper_i,    kg_govern_copper_o,    'commercial','govern', 'copper')
+kg_govern_aluminium_out = preprocess(kg_govern_aluminium, kg_govern_aluminium_i, kg_govern_aluminium_o, 'commercial','govern', 'aluminium')
+kg_govern_glass_out     = preprocess(kg_govern_glass,     kg_govern_glass_i,     kg_govern_glass_o,     'commercial','govern', 'glass')
+kg_govern_brick_out     = preprocess(kg_govern_brick,     kg_govern_brick_i,     kg_govern_brick_o,     'commercial','govern', 'brick')
 
 
 # stack into 1 dataframe
-frames =    [kg_det_rur_steel_out[0], kg_det_rur_cement_out[0], kg_det_rur_concrete_out[0], kg_det_rur_wood_out[0], kg_det_rur_copper_out[0], kg_det_rur_aluminium_out[0], kg_det_rur_glass_out[0],    
-             kg_sem_rur_steel_out[0], kg_sem_rur_cement_out[0], kg_sem_rur_concrete_out[0], kg_sem_rur_wood_out[0], kg_sem_rur_copper_out[0], kg_sem_rur_aluminium_out[0], kg_sem_rur_glass_out[0],    
-             kg_app_rur_steel_out[0], kg_app_rur_cement_out[0], kg_app_rur_concrete_out[0], kg_app_rur_wood_out[0], kg_app_rur_copper_out[0], kg_app_rur_aluminium_out[0], kg_app_rur_glass_out[0],    
-             kg_hig_rur_steel_out[0], kg_hig_rur_cement_out[0], kg_hig_rur_concrete_out[0], kg_hig_rur_wood_out[0], kg_hig_rur_copper_out[0], kg_hig_rur_aluminium_out[0], kg_hig_rur_glass_out[0],    
-             kg_det_urb_steel_out[0], kg_det_urb_cement_out[0], kg_det_urb_concrete_out[0], kg_det_urb_wood_out[0], kg_det_urb_copper_out[0], kg_det_urb_aluminium_out[0], kg_det_urb_glass_out[0],    
-             kg_sem_urb_steel_out[0], kg_sem_urb_cement_out[0], kg_sem_urb_concrete_out[0], kg_sem_urb_wood_out[0], kg_sem_urb_copper_out[0], kg_sem_urb_aluminium_out[0], kg_sem_urb_glass_out[0],    
-             kg_app_urb_steel_out[0], kg_app_urb_cement_out[0], kg_app_urb_concrete_out[0], kg_app_urb_wood_out[0], kg_app_urb_copper_out[0], kg_app_urb_aluminium_out[0], kg_app_urb_glass_out[0],    
-             kg_hig_urb_steel_out[0], kg_hig_urb_cement_out[0], kg_hig_urb_concrete_out[0], kg_hig_urb_wood_out[0], kg_hig_urb_copper_out[0], kg_hig_urb_aluminium_out[0], kg_hig_urb_glass_out[0],
-             kg_office_steel_out[0],  kg_office_cement_out[0],  kg_office_concrete_out[0],  kg_office_wood_out[0],  kg_office_copper_out[0],  kg_office_aluminium_out[0],  kg_office_glass_out[0],
-             kg_retail_steel_out[0],  kg_retail_cement_out[0],  kg_retail_concrete_out[0],  kg_retail_wood_out[0],  kg_retail_copper_out[0],  kg_retail_aluminium_out[0],  kg_retail_glass_out[0],
-             kg_hotels_steel_out[0],  kg_hotels_cement_out[0],  kg_hotels_concrete_out[0],  kg_hotels_wood_out[0],  kg_hotels_copper_out[0],  kg_hotels_aluminium_out[0],  kg_hotels_glass_out[0],
-             kg_govern_steel_out[0],  kg_govern_cement_out[0],  kg_govern_concrete_out[0],  kg_govern_wood_out[0],  kg_govern_copper_out[0],  kg_govern_aluminium_out[0],  kg_govern_glass_out[0],
+frames =    [kg_det_rur_steel_out[0], kg_det_rur_cement_out[0], kg_det_rur_concrete_out[0], kg_det_rur_wood_out[0], kg_det_rur_copper_out[0], kg_det_rur_aluminium_out[0], kg_det_rur_glass_out[0], kg_det_rur_brick_out[0],    
+             kg_sem_rur_steel_out[0], kg_sem_rur_cement_out[0], kg_sem_rur_concrete_out[0], kg_sem_rur_wood_out[0], kg_sem_rur_copper_out[0], kg_sem_rur_aluminium_out[0], kg_sem_rur_glass_out[0], kg_sem_rur_brick_out[0],   
+             kg_app_rur_steel_out[0], kg_app_rur_cement_out[0], kg_app_rur_concrete_out[0], kg_app_rur_wood_out[0], kg_app_rur_copper_out[0], kg_app_rur_aluminium_out[0], kg_app_rur_glass_out[0], kg_app_rur_brick_out[0],   
+             kg_hig_rur_steel_out[0], kg_hig_rur_cement_out[0], kg_hig_rur_concrete_out[0], kg_hig_rur_wood_out[0], kg_hig_rur_copper_out[0], kg_hig_rur_aluminium_out[0], kg_hig_rur_glass_out[0], kg_hig_rur_brick_out[0],   
+             kg_det_urb_steel_out[0], kg_det_urb_cement_out[0], kg_det_urb_concrete_out[0], kg_det_urb_wood_out[0], kg_det_urb_copper_out[0], kg_det_urb_aluminium_out[0], kg_det_urb_glass_out[0], kg_det_urb_brick_out[0],    
+             kg_sem_urb_steel_out[0], kg_sem_urb_cement_out[0], kg_sem_urb_concrete_out[0], kg_sem_urb_wood_out[0], kg_sem_urb_copper_out[0], kg_sem_urb_aluminium_out[0], kg_sem_urb_glass_out[0], kg_sem_urb_brick_out[0],     
+             kg_app_urb_steel_out[0], kg_app_urb_cement_out[0], kg_app_urb_concrete_out[0], kg_app_urb_wood_out[0], kg_app_urb_copper_out[0], kg_app_urb_aluminium_out[0], kg_app_urb_glass_out[0], kg_app_urb_brick_out[0],    
+             kg_hig_urb_steel_out[0], kg_hig_urb_cement_out[0], kg_hig_urb_concrete_out[0], kg_hig_urb_wood_out[0], kg_hig_urb_copper_out[0], kg_hig_urb_aluminium_out[0], kg_hig_urb_glass_out[0], kg_hig_urb_brick_out[0],
+             kg_office_steel_out[0],  kg_office_cement_out[0],  kg_office_concrete_out[0],  kg_office_wood_out[0],  kg_office_copper_out[0],  kg_office_aluminium_out[0],  kg_office_glass_out[0],  kg_office_brick_out[0],
+             kg_retail_steel_out[0],  kg_retail_cement_out[0],  kg_retail_concrete_out[0],  kg_retail_wood_out[0],  kg_retail_copper_out[0],  kg_retail_aluminium_out[0],  kg_retail_glass_out[0],  kg_retail_brick_out[0],
+             kg_hotels_steel_out[0],  kg_hotels_cement_out[0],  kg_hotels_concrete_out[0],  kg_hotels_wood_out[0],  kg_hotels_copper_out[0],  kg_hotels_aluminium_out[0],  kg_hotels_glass_out[0],  kg_hotels_brick_out[0],
+             kg_govern_steel_out[0],  kg_govern_cement_out[0],  kg_govern_concrete_out[0],  kg_govern_wood_out[0],  kg_govern_copper_out[0],  kg_govern_aluminium_out[0],  kg_govern_glass_out[0],  kg_govern_brick_out[0],
                                                            
-             kg_det_rur_steel_out[1], kg_det_rur_cement_out[1], kg_det_rur_concrete_out[1], kg_det_rur_wood_out[1], kg_det_rur_copper_out[1], kg_det_rur_aluminium_out[1], kg_det_rur_glass_out[1],    
-             kg_sem_rur_steel_out[1], kg_sem_rur_cement_out[1], kg_sem_rur_concrete_out[1], kg_sem_rur_wood_out[1], kg_sem_rur_copper_out[1], kg_sem_rur_aluminium_out[1], kg_sem_rur_glass_out[1],    
-             kg_app_rur_steel_out[1], kg_app_rur_cement_out[1], kg_app_rur_concrete_out[1], kg_app_rur_wood_out[1], kg_app_rur_copper_out[1], kg_app_rur_aluminium_out[1], kg_app_rur_glass_out[1],    
-             kg_hig_rur_steel_out[1], kg_hig_rur_cement_out[1], kg_hig_rur_concrete_out[1], kg_hig_rur_wood_out[1], kg_hig_rur_copper_out[1], kg_hig_rur_aluminium_out[1], kg_hig_rur_glass_out[1],    
-             kg_det_urb_steel_out[1], kg_det_urb_cement_out[1], kg_det_urb_concrete_out[1], kg_det_urb_wood_out[1], kg_det_urb_copper_out[1], kg_det_urb_aluminium_out[1], kg_det_urb_glass_out[1],    
-             kg_sem_urb_steel_out[1], kg_sem_urb_cement_out[1], kg_sem_urb_concrete_out[1], kg_sem_urb_wood_out[1], kg_sem_urb_copper_out[1], kg_sem_urb_aluminium_out[1], kg_sem_urb_glass_out[1],    
-             kg_app_urb_steel_out[1], kg_app_urb_cement_out[1], kg_app_urb_concrete_out[1], kg_app_urb_wood_out[1], kg_app_urb_copper_out[1], kg_app_urb_aluminium_out[1], kg_app_urb_glass_out[1],    
-             kg_hig_urb_steel_out[1], kg_hig_urb_cement_out[1], kg_hig_urb_concrete_out[1], kg_hig_urb_wood_out[1], kg_hig_urb_copper_out[1], kg_hig_urb_aluminium_out[1], kg_hig_urb_glass_out[1],
-             kg_office_steel_out[1],  kg_office_cement_out[1],  kg_office_concrete_out[1],  kg_office_wood_out[1],  kg_office_copper_out[1],  kg_office_aluminium_out[1],  kg_office_glass_out[1],
-             kg_retail_steel_out[1],  kg_retail_cement_out[1],  kg_retail_concrete_out[1],  kg_retail_wood_out[1],  kg_retail_copper_out[1],  kg_retail_aluminium_out[1],  kg_retail_glass_out[1],
-             kg_hotels_steel_out[1],  kg_hotels_cement_out[1],  kg_hotels_concrete_out[1],  kg_hotels_wood_out[1],  kg_hotels_copper_out[1],  kg_hotels_aluminium_out[1],  kg_hotels_glass_out[1],
-             kg_govern_steel_out[1],  kg_govern_cement_out[1],  kg_govern_concrete_out[1],  kg_govern_wood_out[1],  kg_govern_copper_out[1],  kg_govern_aluminium_out[1],  kg_govern_glass_out[1],
+             kg_det_rur_steel_out[1], kg_det_rur_cement_out[1], kg_det_rur_concrete_out[1], kg_det_rur_wood_out[1], kg_det_rur_copper_out[1], kg_det_rur_aluminium_out[1], kg_det_rur_glass_out[1], kg_det_rur_brick_out[1],   
+             kg_sem_rur_steel_out[1], kg_sem_rur_cement_out[1], kg_sem_rur_concrete_out[1], kg_sem_rur_wood_out[1], kg_sem_rur_copper_out[1], kg_sem_rur_aluminium_out[1], kg_sem_rur_glass_out[1], kg_sem_rur_brick_out[1],   
+             kg_app_rur_steel_out[1], kg_app_rur_cement_out[1], kg_app_rur_concrete_out[1], kg_app_rur_wood_out[1], kg_app_rur_copper_out[1], kg_app_rur_aluminium_out[1], kg_app_rur_glass_out[1], kg_app_rur_brick_out[1],     
+             kg_hig_rur_steel_out[1], kg_hig_rur_cement_out[1], kg_hig_rur_concrete_out[1], kg_hig_rur_wood_out[1], kg_hig_rur_copper_out[1], kg_hig_rur_aluminium_out[1], kg_hig_rur_glass_out[1], kg_hig_rur_brick_out[1],    
+             kg_det_urb_steel_out[1], kg_det_urb_cement_out[1], kg_det_urb_concrete_out[1], kg_det_urb_wood_out[1], kg_det_urb_copper_out[1], kg_det_urb_aluminium_out[1], kg_det_urb_glass_out[1], kg_det_urb_brick_out[1],    
+             kg_sem_urb_steel_out[1], kg_sem_urb_cement_out[1], kg_sem_urb_concrete_out[1], kg_sem_urb_wood_out[1], kg_sem_urb_copper_out[1], kg_sem_urb_aluminium_out[1], kg_sem_urb_glass_out[1], kg_sem_urb_brick_out[1],    
+             kg_app_urb_steel_out[1], kg_app_urb_cement_out[1], kg_app_urb_concrete_out[1], kg_app_urb_wood_out[1], kg_app_urb_copper_out[1], kg_app_urb_aluminium_out[1], kg_app_urb_glass_out[1], kg_app_urb_brick_out[1],      
+             kg_hig_urb_steel_out[1], kg_hig_urb_cement_out[1], kg_hig_urb_concrete_out[1], kg_hig_urb_wood_out[1], kg_hig_urb_copper_out[1], kg_hig_urb_aluminium_out[1], kg_hig_urb_glass_out[1], kg_hig_urb_brick_out[1],
+             kg_office_steel_out[1],  kg_office_cement_out[1],  kg_office_concrete_out[1],  kg_office_wood_out[1],  kg_office_copper_out[1],  kg_office_aluminium_out[1],  kg_office_glass_out[1],  kg_office_brick_out[1],
+             kg_retail_steel_out[1],  kg_retail_cement_out[1],  kg_retail_concrete_out[1],  kg_retail_wood_out[1],  kg_retail_copper_out[1],  kg_retail_aluminium_out[1],  kg_retail_glass_out[1],  kg_retail_brick_out[1],
+             kg_hotels_steel_out[1],  kg_hotels_cement_out[1],  kg_hotels_concrete_out[1],  kg_hotels_wood_out[1],  kg_hotels_copper_out[1],  kg_hotels_aluminium_out[1],  kg_hotels_glass_out[1],  kg_hotels_brick_out[1],
+             kg_govern_steel_out[1],  kg_govern_cement_out[1],  kg_govern_concrete_out[1],  kg_govern_wood_out[1],  kg_govern_copper_out[1],  kg_govern_aluminium_out[1],  kg_govern_glass_out[1],  kg_govern_brick_out[1],
             
-             kg_det_rur_steel_out[2], kg_det_rur_cement_out[2], kg_det_rur_concrete_out[2], kg_det_rur_wood_out[2], kg_det_rur_copper_out[2], kg_det_rur_aluminium_out[2], kg_det_rur_glass_out[2],    
-             kg_sem_rur_steel_out[2], kg_sem_rur_cement_out[2], kg_sem_rur_concrete_out[2], kg_sem_rur_wood_out[2], kg_sem_rur_copper_out[2], kg_sem_rur_aluminium_out[2], kg_sem_rur_glass_out[2],    
-             kg_app_rur_steel_out[2], kg_app_rur_cement_out[2], kg_app_rur_concrete_out[2], kg_app_rur_wood_out[2], kg_app_rur_copper_out[2], kg_app_rur_aluminium_out[2], kg_app_rur_glass_out[2],    
-             kg_hig_rur_steel_out[2], kg_hig_rur_cement_out[2], kg_hig_rur_concrete_out[2], kg_hig_rur_wood_out[2], kg_hig_rur_copper_out[2], kg_hig_rur_aluminium_out[2], kg_hig_rur_glass_out[2],    
-             kg_det_urb_steel_out[2], kg_det_urb_cement_out[2], kg_det_urb_concrete_out[2], kg_det_urb_wood_out[2], kg_det_urb_copper_out[2], kg_det_urb_aluminium_out[2], kg_det_urb_glass_out[2],    
-             kg_sem_urb_steel_out[2], kg_sem_urb_cement_out[2], kg_sem_urb_concrete_out[2], kg_sem_urb_wood_out[2], kg_sem_urb_copper_out[2], kg_sem_urb_aluminium_out[2], kg_sem_urb_glass_out[2],    
-             kg_app_urb_steel_out[2], kg_app_urb_cement_out[2], kg_app_urb_concrete_out[2], kg_app_urb_wood_out[2], kg_app_urb_copper_out[2], kg_app_urb_aluminium_out[2], kg_app_urb_glass_out[2],    
-             kg_hig_urb_steel_out[2], kg_hig_urb_cement_out[2], kg_hig_urb_concrete_out[2], kg_hig_urb_wood_out[2], kg_hig_urb_copper_out[2], kg_hig_urb_aluminium_out[2], kg_hig_urb_glass_out[2], 
-             kg_office_steel_out[2],  kg_office_cement_out[2],  kg_office_concrete_out[2],  kg_office_wood_out[2],  kg_office_copper_out[2],  kg_office_aluminium_out[2],  kg_office_glass_out[2],
-             kg_retail_steel_out[2],  kg_retail_cement_out[2],  kg_retail_concrete_out[2],  kg_retail_wood_out[2],  kg_retail_copper_out[2],  kg_retail_aluminium_out[2],  kg_retail_glass_out[2],
-             kg_hotels_steel_out[2],  kg_hotels_cement_out[2],  kg_hotels_concrete_out[2],  kg_hotels_wood_out[2],  kg_hotels_copper_out[2],  kg_hotels_aluminium_out[2],  kg_hotels_glass_out[2],
-             kg_govern_steel_out[2],  kg_govern_cement_out[2],  kg_govern_concrete_out[2],  kg_govern_wood_out[2],  kg_govern_copper_out[2],  kg_govern_aluminium_out[2],  kg_govern_glass_out[2]   ]
+             kg_det_rur_steel_out[2], kg_det_rur_cement_out[2], kg_det_rur_concrete_out[2], kg_det_rur_wood_out[2], kg_det_rur_copper_out[2], kg_det_rur_aluminium_out[2], kg_det_rur_glass_out[2], kg_det_rur_brick_out[2],   
+             kg_sem_rur_steel_out[2], kg_sem_rur_cement_out[2], kg_sem_rur_concrete_out[2], kg_sem_rur_wood_out[2], kg_sem_rur_copper_out[2], kg_sem_rur_aluminium_out[2], kg_sem_rur_glass_out[2], kg_sem_rur_brick_out[2],   
+             kg_app_rur_steel_out[2], kg_app_rur_cement_out[2], kg_app_rur_concrete_out[2], kg_app_rur_wood_out[2], kg_app_rur_copper_out[2], kg_app_rur_aluminium_out[2], kg_app_rur_glass_out[2], kg_app_rur_brick_out[2],    
+             kg_hig_rur_steel_out[2], kg_hig_rur_cement_out[2], kg_hig_rur_concrete_out[2], kg_hig_rur_wood_out[2], kg_hig_rur_copper_out[2], kg_hig_rur_aluminium_out[2], kg_hig_rur_glass_out[2], kg_hig_rur_brick_out[2],  
+             kg_det_urb_steel_out[2], kg_det_urb_cement_out[2], kg_det_urb_concrete_out[2], kg_det_urb_wood_out[2], kg_det_urb_copper_out[2], kg_det_urb_aluminium_out[2], kg_det_urb_glass_out[2], kg_det_urb_brick_out[2],   
+             kg_sem_urb_steel_out[2], kg_sem_urb_cement_out[2], kg_sem_urb_concrete_out[2], kg_sem_urb_wood_out[2], kg_sem_urb_copper_out[2], kg_sem_urb_aluminium_out[2], kg_sem_urb_glass_out[2], kg_sem_urb_brick_out[2],   
+             kg_app_urb_steel_out[2], kg_app_urb_cement_out[2], kg_app_urb_concrete_out[2], kg_app_urb_wood_out[2], kg_app_urb_copper_out[2], kg_app_urb_aluminium_out[2], kg_app_urb_glass_out[2], kg_app_urb_brick_out[2],   
+             kg_hig_urb_steel_out[2], kg_hig_urb_cement_out[2], kg_hig_urb_concrete_out[2], kg_hig_urb_wood_out[2], kg_hig_urb_copper_out[2], kg_hig_urb_aluminium_out[2], kg_hig_urb_glass_out[2], kg_hig_urb_brick_out[2], 
+             kg_office_steel_out[2],  kg_office_cement_out[2],  kg_office_concrete_out[2],  kg_office_wood_out[2],  kg_office_copper_out[2],  kg_office_aluminium_out[2],  kg_office_glass_out[2],  kg_office_brick_out[2],
+             kg_retail_steel_out[2],  kg_retail_cement_out[2],  kg_retail_concrete_out[2],  kg_retail_wood_out[2],  kg_retail_copper_out[2],  kg_retail_aluminium_out[2],  kg_retail_glass_out[2],  kg_retail_brick_out[2],
+             kg_hotels_steel_out[2],  kg_hotels_cement_out[2],  kg_hotels_concrete_out[2],  kg_hotels_wood_out[2],  kg_hotels_copper_out[2],  kg_hotels_aluminium_out[2],  kg_hotels_glass_out[2],  kg_hotels_brick_out[2],
+             kg_govern_steel_out[2],  kg_govern_cement_out[2],  kg_govern_concrete_out[2],  kg_govern_wood_out[2],  kg_govern_copper_out[2],  kg_govern_aluminium_out[2],  kg_govern_glass_out[2],  kg_govern_brick_out[2] ]
 
 material_output = pd.concat(frames)
-material_output.to_csv('output\\material_output.csv')
+material_output.to_csv('output\\material_output.csv') # in kt
 
-# SQUARE METERS (Stock results) ---------------------------------------------------
+# SQUARE METERS (results) ---------------------------------------------------
 
 length = 3
 tag = ['stock', 'inflow', 'outflow']
 
-m2_det_rur_out  = [[]] * length
-m2_det_rur_out[0]  = m2_det_rur.transpose()
-m2_det_rur_out[1]  = m2_det_rur_i.transpose()
-m2_det_rur_out[2]  = m2_det_rur_o.transpose()
-for item in range(0,length):
-    m2_det_rur_out[item].insert(0,'area', ['rural'] * 26)
-    m2_det_rur_out[item].insert(0,'type', ['detached'] * 26)
-    m2_det_rur_out[item].insert(0,'flow', [tag[item]] * 26)
+# first, define a function to transpose + combine all variables & add columns to identify material, area & appartment type. Only for csv output
+def preprocess_m2(stock, inflow, outflow, area, building):
+   output_combined = [[]] * length
+   output_combined[0] = stock.transpose()
+   output_combined[1] = inflow.transpose()
+   output_combined[2] = outflow.transpose()
+   for item in range(0,length):
+      output_combined[item].insert(0,'area', [area] * 26)
+      output_combined[item].insert(0,'type', [building] * 26)
+      output_combined[item].insert(0,'flow', [tag[item]] * 26)
+   return output_combined
 
-m2_sem_rur_out  = [[]] * length
-m2_sem_rur_out[0]  = m2_sem_rur.transpose()
-m2_sem_rur_out[1]  = m2_sem_rur_i.transpose()
-m2_sem_rur_out[2]  = m2_sem_rur_o.transpose()
-for item in range(0,length):
-    m2_sem_rur_out[item].insert(0,'area', ['rural'] * 26)
-    m2_sem_rur_out[item].insert(0,'type', ['semi-detached'] * 26)
-    m2_sem_rur_out[item].insert(0,'flow', [tag[item]] * 26)
+m2_det_rur_out  = preprocess_m2(m2_det_rur, m2_det_rur_i, m2_det_rur_o.sum(axis=1, level=0), 'rural', 'detached')
+m2_sem_rur_out  = preprocess_m2(m2_sem_rur, m2_sem_rur_i, m2_sem_rur_o.sum(axis=1, level=0), 'rural', 'semi-detached')
+m2_app_rur_out  = preprocess_m2(m2_app_rur, m2_app_rur_i, m2_app_rur_o.sum(axis=1, level=0), 'rural', 'appartments')
+m2_hig_rur_out  = preprocess_m2(m2_hig_rur, m2_hig_rur_i, m2_hig_rur_o.sum(axis=1, level=0), 'rural', 'high-rise')
 
-m2_app_rur_out  = [[]] * length
-m2_app_rur_out[0]  = m2_app_rur.transpose()
-m2_app_rur_out[1]  = m2_app_rur_i.transpose()
-m2_app_rur_out[2]  = m2_app_rur_o.transpose()
-for item in range(0,length):
-    m2_app_rur_out[item].insert(0,'area', ['rural'] * 26)
-    m2_app_rur_out[item].insert(0,'type', ['appartments'] * 26)
-    m2_app_rur_out[item].insert(0,'flow', [tag[item]] * 26)
-
-m2_hig_rur_out  = [[]] * length
-m2_hig_rur_out[0]  = m2_hig_rur.transpose()
-m2_hig_rur_out[1]  = m2_hig_rur_i.transpose()
-m2_hig_rur_out[2]  = m2_hig_rur_o.transpose()  
-for item in range(0,length):  
-    m2_hig_rur_out[item].insert(0,'area', ['rural'] * 26)
-    m2_hig_rur_out[item].insert(0,'type', ['high-rise'] * 26)
-    m2_hig_rur_out[item].insert(0,'flow', [tag[item]] * 26)
-
-m2_det_urb_out  = [[]] * length
-m2_det_urb_out[0]  = m2_det_urb.transpose()
-m2_det_urb_out[1]  = m2_det_urb_i.transpose()
-m2_det_urb_out[2]  = m2_det_urb_o.transpose()  
-for item in range(0,length):  
-    m2_det_urb_out[item].insert(0,'area', ['urban'] * 26)
-    m2_det_urb_out[item].insert(0,'type', ['detached'] * 26)
-    m2_det_urb_out[item].insert(0,'flow', [tag[item]] * 26)
-
-m2_sem_urb_out  = [[]] * length
-m2_sem_urb_out[0]  = m2_sem_urb.transpose()
-m2_sem_urb_out[1]  = m2_sem_urb_i.transpose()
-m2_sem_urb_out[2]  = m2_sem_urb_o.transpose()  
-for item in range(0,length):  
-    m2_sem_urb_out[item].insert(0,'area', ['urban'] * 26)
-    m2_sem_urb_out[item].insert(0,'type', ['semi-detached'] * 26)
-    m2_sem_urb_out[item].insert(0,'flow', [tag[item]] * 26)
-    
-m2_app_urb_out  = [[]] * length
-m2_app_urb_out[0]  = m2_app_urb.transpose()
-m2_app_urb_out[1]  = m2_app_urb_i.transpose()
-m2_app_urb_out[2]  = m2_app_urb_o.transpose()  
-for item in range(0,length):  
-    m2_app_urb_out[item].insert(0,'area', ['urban'] * 26)
-    m2_app_urb_out[item].insert(0,'type', ['appartments'] * 26)
-    m2_app_urb_out[item].insert(0,'flow', [tag[item]] * 26)
-    
-m2_hig_urb_out  = [[]] * length
-m2_hig_urb_out[0]  = m2_hig_urb.transpose()
-m2_hig_urb_out[1]  = m2_hig_urb_i.transpose()
-m2_hig_urb_out[2]  = m2_hig_urb_o.transpose()  
-for item in range(0,length):  
-    m2_hig_urb_out[item].insert(0,'area', ['urban'] * 26)
-    m2_hig_urb_out[item].insert(0,'type', ['high-rise'] * 26)
-    m2_hig_urb_out[item].insert(0,'flow', [tag[item]] * 26)
+m2_det_urb_out  = preprocess_m2(m2_det_urb, m2_det_urb_i, m2_det_urb_o.sum(axis=1, level=0), 'urban', 'detached')
+m2_sem_urb_out  = preprocess_m2(m2_sem_urb, m2_sem_urb_i, m2_sem_urb_o.sum(axis=1, level=0), 'urban', 'semi-detached')
+m2_app_urb_out  = preprocess_m2(m2_app_urb, m2_app_urb_i, m2_app_urb_o.sum(axis=1, level=0), 'urban', 'appartments')
+m2_hig_urb_out  = preprocess_m2(m2_hig_urb, m2_hig_urb_i, m2_hig_urb_o.sum(axis=1, level=0), 'urban', 'high-rise')
 
 # COMMERCIAL
-m2_office_out  = [[]] * length
-m2_office_out[0]  = commercial_m2_office.transpose()
-m2_office_out[1]  = m2_office_i.transpose()
-m2_office_out[2]  = m2_office_o.transpose()
-for item in range(0,length):
-    m2_office_out[item].insert(0,'area', ['commercial'] * 26)
-    m2_office_out[item].insert(0,'type', ['office'] * 26)
-    m2_office_out[item].insert(0,'flow', [tag[item]] * 26)
-
-m2_retail_out  = [[]] * length
-m2_retail_out[0]  = commercial_m2_retail.transpose()
-m2_retail_out[1]  = m2_retail_i.transpose()
-m2_retail_out[2]  = m2_retail_o.transpose()
-for item in range(0,length):
-    m2_retail_out[item].insert(0,'area', ['commercial'] * 26)
-    m2_retail_out[item].insert(0,'type', ['retail'] * 26)
-    m2_retail_out[item].insert(0,'flow', [tag[item]] * 26)
-
-m2_hotels_out  = [[]] * length
-m2_hotels_out[0]  = commercial_m2_hotels.transpose()
-m2_hotels_out[1]  = m2_hotels_i.transpose()
-m2_hotels_out[2]  = m2_hotels_o.transpose()
-for item in range(0,length):
-    m2_hotels_out[item].insert(0,'area', ['commercial'] * 26)
-    m2_hotels_out[item].insert(0,'type', ['hotels'] * 26)
-    m2_hotels_out[item].insert(0,'flow', [tag[item]] * 26)
-
-m2_govern_out  = [[]] * length
-m2_govern_out[0]  = commercial_m2_govern.transpose()
-m2_govern_out[1]  = m2_govern_i.transpose()
-m2_govern_out[2]  = m2_govern_o.transpose()
-for item in range(0,length):
-    m2_govern_out[item].insert(0,'area', ['commercial'] * 26)
-    m2_govern_out[item].insert(0,'type', ['govern'] * 26)
-    m2_govern_out[item].insert(0,'flow', [tag[item]] * 26)
+m2_office_out  = preprocess_m2(commercial_m2_office, m2_office_i, m2_office_o.sum(axis=1, level=0), 'commercial', 'office')
+m2_retail_out  = preprocess_m2(commercial_m2_retail, m2_retail_i, m2_retail_o.sum(axis=1, level=0), 'commercial', 'retail')
+m2_hotels_out  = preprocess_m2(commercial_m2_hotels, m2_hotels_i, m2_hotels_o.sum(axis=1, level=0), 'commercial', 'hotels')
+m2_govern_out  = preprocess_m2(commercial_m2_govern, m2_govern_i, m2_govern_o.sum(axis=1, level=0), 'commercial', 'govern')
 
 frames2 = [m2_det_rur_out[0], m2_sem_rur_out[0], m2_app_rur_out[0], m2_hig_rur_out[0], m2_det_urb_out[0], m2_sem_urb_out[0], m2_app_urb_out[0], m2_hig_urb_out[0],
            m2_office_out[0],  m2_retail_out[0],  m2_hotels_out[0],  m2_govern_out[0],
@@ -1817,5 +1088,5 @@ frames2 = [m2_det_rur_out[0], m2_sem_rur_out[0], m2_app_rur_out[0], m2_hig_rur_o
            m2_office_out[2],  m2_retail_out[2],  m2_hotels_out[2],  m2_govern_out[2] ]
 
 sqmeters_output = pd.concat(frames2)
-sqmeters_output.to_csv('output\\sqmeters_output.csv') # in kt
+sqmeters_output.to_csv('output\\sqmeters_output.csv') # in m2
 
