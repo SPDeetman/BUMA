@@ -23,6 +23,7 @@ building_types = 4  #4 building types: detached, semi-detached, appartments & hi
 area = 2            #2 areas: rural & urban
 materials = 7       #6 materials: Steel, Cement, Concrete, Wood, Copper, Aluminium, Glass
 inflation = 1.2423  # gdp/cap inflation correction between 2005 (IMAGE data) & 2016 (commercial calibration) according to https://www.bls.gov/data/inflation_calculator.htm
+end_year = 2050     # year for which the output is generated (e.g. choose 2050 for shorter runtime & smaller filesize)
 
 # Set Flags for sensitivity analysis
 flag_alpha = 0      # switch for the sensitivity analysis on alpha, if 1 the maximum alpha is 10% above the maximum found in the data
@@ -64,8 +65,8 @@ else:
     gompertz = pd.read_csv('files_commercial/Gompertz_parameters_alpha.csv', index_col = [0])
 
 # Ensure full time series  for pop & rurpop (interpolation, some years are missing)
-rurpop2 = rurpop.reindex(list(range(1970,2051,1))).interpolate()
-pop2 = pop.reindex(list(range(1970,2051,1))).interpolate()
+rurpop2 = rurpop.reindex(list(range(1970,end_year + 1,1))).interpolate()
+pop2 = pop.reindex(list(range(1970,end_year + 1,1))).interpolate()
 
 # Remove 1st year, to ensure same Table size as floorspace data (from 1971)
 pop2 = pop2.iloc[1:]
@@ -104,8 +105,8 @@ beta =  gompertz['All']['b'] if flag_ExpDec == 0 else 28.431
 gamma = gompertz['All']['c'] if flag_ExpDec == 0 else 0.0415
 
 # find the total commercial m2 stock (in Millions of m2)
-commercial_m2_cap = pd.DataFrame(index=range(1971,2051), columns=range(1,27))
-for year in range(1971,2051):
+commercial_m2_cap = pd.DataFrame(index=range(1971,end_year + 1), columns=range(1,27))
+for year in range(1971,end_year + 1):
     for region in range(1,27):
         if flag_ExpDec == 0:
             commercial_m2_cap[region][year] = alpha * math.exp(-beta * math.exp((-gamma/1000) * sva_pc[str(region)][year]))
@@ -113,17 +114,17 @@ for year in range(1971,2051):
             commercial_m2_cap[region][year] = max(0.542, alpha - beta * math.exp((-gamma/1000) * sva_pc[str(region)][year]))
 
 # Subdivide the total across Offices, Retail+, Govt+ & Hotels+
-commercial_m2_cap_office = pd.DataFrame(index=range(1971,2051), columns=range(1,27))    # Offices
-commercial_m2_cap_retail = pd.DataFrame(index=range(1971,2051), columns=range(1,27))    # Retail & Warehouses
-commercial_m2_cap_hotels = pd.DataFrame(index=range(1971,2051), columns=range(1,27))    # Hotels & Restaurants
-commercial_m2_cap_govern = pd.DataFrame(index=range(1971,2051), columns=range(1,27))    # Hospitals, Education, Government & Transportation
+commercial_m2_cap_office = pd.DataFrame(index=range(1971, end_year + 1), columns=range(1,27))    # Offices
+commercial_m2_cap_retail = pd.DataFrame(index=range(1971, end_year + 1), columns=range(1,27))    # Retail & Warehouses
+commercial_m2_cap_hotels = pd.DataFrame(index=range(1971, end_year + 1), columns=range(1,27))    # Hotels & Restaurants
+commercial_m2_cap_govern = pd.DataFrame(index=range(1971, end_year + 1), columns=range(1,27))    # Hospitals, Education, Government & Transportation
 
 minimum_com_office = 25
 minimum_com_retail = 25
 minimum_com_hotels = 25
 minimum_com_govern = 25
 
-for year in range(1971,2051):
+for year in range(1971, end_year + 1):
     for region in range(1,27):
         
         # get the square meter per capita floorspace for 4 commercial applications
@@ -309,12 +310,12 @@ total_m2_adj_rur = pd.DataFrame(index=m2_unadjusted_det_rur.index, columns=m2_un
 total_m2_adj_urb = pd.DataFrame(index=m2_unadjusted_det_urb.index, columns=m2_unadjusted_det_urb.columns)
 
 # Sum all square meters in Rural area
-for j in range(1721,2051,1):
+for j in range(1721, end_year + 1,1):
     for i in range(1,27,1):
         total_m2_adj_rur.loc[j,str(i)] = m2_unadjusted_det_rur.loc[j,str(i)] + m2_unadjusted_sem_rur.loc[j,str(i)] + m2_unadjusted_app_rur.loc[j,str(i)] + m2_unadjusted_hig_rur.loc[j,str(i)]
 
 # Sum all square meters in Urban area
-for j in range(1721,2051,1):
+for j in range(1721, end_year + 1,1):
     for i in range(1,27,1):
         total_m2_adj_urb.loc[j,str(i)] = m2_unadjusted_det_urb.loc[j,str(i)] + m2_unadjusted_sem_urb.loc[j,str(i)] + m2_unadjusted_app_urb.loc[j,str(i)] + m2_unadjusted_hig_urb.loc[j,str(i)]
 
@@ -356,24 +357,24 @@ commercial_m2_govern = pd.DataFrame(commercial_m2_cap_govern_tail.values * pop_t
 #%% MATERIAL CALCULATIONS
 
 #First: interpolate the dynamic material intensity data
-materials_commercial_dynamic = pd.DataFrame(index=pd.MultiIndex.from_product([list(range(1721,2051)), list(materials_commercial.index.levels[1])]), columns=materials_commercial.columns)
-building_materials_dynamic   = pd.DataFrame(index=pd.MultiIndex.from_product([list(range(1721,2051)), list(range(1,27)), list(range(1,5))]), columns=building_materials.columns)
+materials_commercial_dynamic = pd.DataFrame(index=pd.MultiIndex.from_product([list(range(1721, end_year + 1)), list(materials_commercial.index.levels[1])]), columns=materials_commercial.columns)
+building_materials_dynamic   = pd.DataFrame(index=pd.MultiIndex.from_product([list(range(1721, end_year + 1)), list(range(1,27)), list(range(1,5))]), columns=building_materials.columns)
 
 for material in building_materials.columns:
    for building in list(building_materials.index.levels[2]):
       
       selection = building_materials.loc[idx[:,:,building],material].droplevel(2, axis=0).unstack()
       selection.loc[1721,:] = selection.loc[selection.first_valid_index(),:]
-      selection.loc[2051,:] = selection.loc[selection.last_valid_index(),:]
-      selection = selection.reindex(list(range(1721,2051))).interpolate()
+      selection.loc[end_year + 1,:] = selection.loc[selection.last_valid_index(),:]
+      selection = selection.reindex(list(range(1721, end_year + 1))).interpolate()
       
       building_materials_dynamic.loc[idx[:,:,building], material] = selection.stack()
 
 for building in materials_commercial.columns:
    selection = materials_commercial.loc[idx[:,:], building].unstack()
    selection.loc[1721,:] = selection.loc[selection.first_valid_index(),:]
-   selection.loc[2051,:] = selection.loc[selection.last_valid_index(),:]
-   selection = selection.reindex(list(range(1721,2051))).interpolate()
+   selection.loc[end_year + 1,:] = selection.loc[selection.last_valid_index(),:]
+   selection = selection.reindex(list(range(1721, end_year + 1))).interpolate()
    
    materials_commercial_dynamic.loc[idx[:,:], building] = selection.stack()   
 
@@ -415,10 +416,10 @@ else:
 # actual inflow calculations
 def inflow_outflow(shape, scale, stock, length):            # length is the number of years in the entire period
     
-   columns = pd.MultiIndex.from_product([list(range(1,27)), list(range(1721,2051))], names=['regions', 'time'])
-   out_oc_reg = pd.DataFrame(index=range(1721,2051), columns=columns)
-   out_sc_reg = pd.DataFrame(index=range(1721,2051), columns=columns)
-   out_i_reg  = pd.DataFrame(index=range(1721,2051), columns=range(1,27))
+   columns = pd.MultiIndex.from_product([list(range(1,27)), list(range(1721, end_year + 1))], names=['regions', 'time'])
+   out_oc_reg = pd.DataFrame(index=range(1721, end_year + 1), columns=columns)
+   out_sc_reg = pd.DataFrame(index=range(1721, end_year + 1), columns=columns)
+   out_i_reg  = pd.DataFrame(index=range(1721, end_year + 1), columns=range(1,27))
     
     
    for region in range(0,26):
@@ -434,9 +435,9 @@ def inflow_outflow(shape, scale, stock, length):            # length is the numb
       
       # (for now) We're only interested in the total outflow, so we sum the outflow by cohort each year
       out_oc[out_oc < 0] = 0  # in the rare occasion that negative outflow exists (as a consequence of negative inflow correct), purge values below zero
-      out_oc_reg.loc[:,idx[region+1,:]] = pd.DataFrame(out_oc, index=list(range(1721,2051)), columns=list(range(1721,2051))).values
-      out_sc_reg.loc[:,idx[region+1,:]] = pd.DataFrame(out_sc, index=list(range(1721,2051)), columns=list(range(1721,2051))).values
-      out_i_reg[region+1]               = pd.Series(out_i, index=list(range(1721,2051)))
+      out_oc_reg.loc[:,idx[region+1,:]] = pd.DataFrame(out_oc, index=list(range(1721, end_year + 1)), columns=list(range(1721, end_year + 1))).values
+      out_sc_reg.loc[:,idx[region+1,:]] = pd.DataFrame(out_sc, index=list(range(1721, end_year + 1)), columns=list(range(1721, end_year + 1))).values
+      out_i_reg[region+1]               = pd.Series(out_i, index=list(range(1721, end_year + 1)))
       
    return out_oc_reg, out_i_reg, out_sc_reg
 
